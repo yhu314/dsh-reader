@@ -48,7 +48,7 @@ test('client module registers with the module loader', () => {
   assert.ok(module.__test)
 })
 
-const { splitBlocks, computeSegments, buildPrompt, inlineNodes, parseFileAddress, imageUrlFor, BookBody } = captured.factory(requireStub).__test
+const { splitBlocks, computeSegments, buildPrompt, inlineNodes, parseFileAddress, imageUrlFor, resolveLinkPath, sessionFileAddress, BookBody } = captured.factory(requireStub).__test
 
 test('splitBlocks: frontmatter, headings, paragraphs, scene break', () => {
   const blocks = splitBlocks(
@@ -192,4 +192,25 @@ test('imageUrlFor: local images use the authenticated file route', () => {
   // An absolute chapter path (ad-hoc books) resolves next to the file.
   const adhoc = imageUrlFor('/abs/book/ch1.md', 'pics/a.png', undefined)
   assert.equal(decodeURIComponent(adhoc.slice('/api/file?path='.length)), '/abs/book/pics/a.png')
+})
+
+test('resolveLinkPath: anchors, same-directory files, relative paths and protocols', () => {
+  assert.deepEqual(resolveLinkPath('#第二章', 'book/ch1.md', '/ws'), { path: '', fragment: '第二章', external: false })
+  assert.deepEqual(resolveLinkPath('ch2.md', 'book/ch1.md', '/ws'), { path: '/ws/book/ch2.md', fragment: '', external: false })
+  assert.deepEqual(resolveLinkPath('../other/x.md', 'book/ch1.md', '/ws'), { path: '/ws/other/x.md', fragment: '', external: false })
+  assert.equal(resolveLinkPath('ch2.md#top', 'book/ch1.md', '/ws').fragment, 'top')
+  assert.equal(resolveLinkPath('https://example.com/a', 'book/ch1.md', '/ws').external, true)
+  assert.equal(resolveLinkPath('mailto:a@b.c', 'book/ch1.md', '/ws').external, true)
+  // Absolute chapter paths (ad-hoc books) resolve without pathBase.
+  assert.equal(resolveLinkPath('ch2.md', '/abs/book/ch1.md', '').path, '/abs/book/ch2.md')
+  // A relative link cannot be resolved without either an absolute chapter or pathBase.
+  assert.equal(resolveLinkPath('ch2.md', 'book/ch1.md', '').unresolved, true)
+})
+
+test('sessionFileAddress keeps the leading slash and encodes each segment', () => {
+  const address = sessionFileAddress('s', '/abs/第 1章.md')
+  assert.equal(address, 'dsh-resource://file/session/s//abs/' + encodeURIComponent('第 1章.md'))
+  const parsed = parseFileAddress(address)
+  assert.equal(parsed.sessionId, 's')
+  assert.equal(parsed.path, '/abs/第 1章.md')
 })

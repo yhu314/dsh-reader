@@ -62,6 +62,8 @@ window.__ModuleLoader__.load({
       searchTruncated: '结果太多，只显示了前一部分',
       width: '阅读宽度',
       searchJump: '跳到这一段',
+      linkUnresolved: '这个相对链接无法解析（当前章节没有已知的绝对路径）',
+      linkUnavailable: '这个链接打不开（当前标签页没有会话信息）',
       notThisSession: '阅读器未在这个会话启用',
       notThisSessionBody:
         '插件里配置了 sessions 白名单，当前会话不在名单内。刷新页面即可恢复内置预览；要在这里启用，把会话 id 加进 sessions。',
@@ -117,6 +119,8 @@ window.__ModuleLoader__.load({
       searchTruncated: 'Too many results; showing the first ones',
       width: 'Reading width',
       searchJump: 'Jump to this paragraph',
+      linkUnresolved: 'This relative link cannot be resolved for the current chapter.',
+      linkUnavailable: 'This link cannot be opened from this tab.',
       notThisSession: 'Reader is not enabled in this session',
       notThisSessionBody:
         'The plugin has a `sessions` allowlist and this session is not on it. Reload the page to get the built-in preview back; add this session id to `sessions` to use the reader here.',
@@ -476,7 +480,7 @@ window.__ModuleLoader__.load({
       return blocks
     }
 
-    function inlineTextNodes(value, keyPrefix) {
+    function inlineTextNodes(value, keyPrefix, handleLink) {
       const text = typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value)
       const pattern = /(\*\*|__)(.+?)\1|(\*|_)(.+?)\3|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|~~(.+?)~~/g
       const nodes = []
@@ -490,14 +494,26 @@ window.__ModuleLoader__.load({
         else if (match[4] !== undefined) nodes.push(h('em', { key }, match[4]))
         else if (match[5] !== undefined) nodes.push(h('code', { key, className: 'dsr-code' }, match[5]))
         else if (match[6] !== undefined) {
-          nodes.push(h('a', { key, className: 'dsr-link', href: match[7], target: '_blank', rel: 'noreferrer noopener', onClick: (event) => event.stopPropagation() }, match[6]))
+          const linkHref = match[7]
+          const linkLabel = match[6]
+          nodes.push(h('a', {
+            key,
+            className: 'dsr-link',
+            href: linkHref,
+            target: '_blank',
+            rel: 'noreferrer noopener',
+            onClick: (event) => {
+              event.stopPropagation()
+              if (handleLink && handleLink(linkHref, event)) event.preventDefault()
+            },
+          }, linkLabel))
         } else if (match[8] !== undefined) nodes.push(h('del', { key }, match[8]))
         last = pattern.lastIndex
       }
       if (text.slice(last)) nodes.push(text.slice(last))
       return nodes
     }
-    function inlineNodes(value, keyPrefix, resolveImage) {
+    function inlineNodes(value, keyPrefix, resolveImage, handleLink) {
       const text = typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value)
       const pattern = /!\[([^\]]*)\]\(([^)\s]+)\)/g
       const nodes = []
@@ -505,13 +521,13 @@ window.__ModuleLoader__.load({
       let match
       let index = 0
       while ((match = pattern.exec(text)) !== null) {
-        if (match.index > last) nodes.push(...inlineTextNodes(text.slice(last, match.index), keyPrefix + '-t' + index))
+        if (match.index > last) nodes.push(...inlineTextNodes(text.slice(last, match.index), keyPrefix + '-t' + index, handleLink))
         const src = resolveImage ? resolveImage(match[2]) : match[2]
         nodes.push(h('img', { key: keyPrefix + '-img' + index, className: 'dsr-img', src, alt: match[1] || '' }))
         last = pattern.lastIndex
         index += 1
       }
-      if (last < text.length) nodes.push(...inlineTextNodes(text.slice(last), keyPrefix + '-t' + index))
+      if (last < text.length) nodes.push(...inlineTextNodes(text.slice(last), keyPrefix + '-t' + index, handleLink))
       return nodes
     }
 
@@ -564,20 +580,69 @@ window.__ModuleLoader__.load({
       return '/' + parts.join('/')
     }
 
+    function absoluteChapterPath(chapterPath, pathBase) {
+      if (!chapterPath) return ''
+      if (String(chapterPath).startsWith('/')) return String(chapterPath)
+      if (pathBase) return String(pathBase).replace(/\/+$/, '') + '/' + String(chapterPath)
+      return ''
+    }
+
+    function dirnameOf(path) {
+      const value = String(path || '')
+      const slash = value.lastIndexOf('/')
+      return slash <= 0 ? '/' : value.slice(0, slash)
+    }
+
+    function isMarkdownPath(path) {
+      return /\.(md|markdown)$/i.test(String(path || ''))
+    }
+
+    /**
+     * Resolve a markdown link relative to the chapter that contains it.
+     *
+     * Returns `{ external: true }` for http(s)/mailto/other schemes,
+     * `{ path: '', fragment }` for a pure in-page `#anchor`, and otherwise the
+     * normalized absolute `path` plus any `fragment`.
+     */
+    function resolveLinkPath(href, chapterPath, pathBase) {
+      const raw = String(href || '').trim()
+      if (raw === '') return null
+      const hash = raw.indexOf('#')
+      const withoutFragment = hash >= 0 ? raw.slice(0, hash) : raw
+      const fragment = hash >= 0 ? raw.slice(hash + 1) : ''
+      if (withoutFragment === '') return { path: '', fragment, external: false }
+      let decoded = withoutFragment
+      try {
+        decoded = decodeURIComponent(withoutFragment)
+      } catch {
+        /* keep the raw form */
+      }
+      if (/^[a-z][a-z0-9+.-]*:/i.test(decoded) || decoded.startsWith('//')) {
+        return { path: '', fragment, external: true }
+      }
+      if (decoded.startsWith('/')) return { path: normalizePosix(decoded), fragment, external: false }
+      const base = absoluteChapterPath(chapterPath, pathBase)
+      if (!base) return { path: '', fragment, external: false, unresolved: true }
+      return { path: normalizePosix(dirnameOf(base) + '/' + decoded), fragment, external: false }
+    }
+
+    /** dsh-resource address for an absolute path, authorised by the tab's session. */
+    function sessionFileAddress(sessionId, absolutePath) {
+      const encoded = String(absolutePath)
+        .split('/')
+        .map((segment) => encodeURIComponent(segment))
+        .join('/')
+      return 'dsh-resource://file/session/' + encodeURIComponent(sessionId) + '/' + encoded
+    }
+
     function imageUrlFor(chapterPath, src, pathBase) {
       const raw = String(src || '').trim()
       if (raw === '') return ''
       if (/^(https?:|data:)/i.test(raw)) return raw
       if (raw.startsWith('/')) return '/api/file?path=' + encodeURIComponent(raw)
-      const base =
-        chapterPath && String(chapterPath).startsWith('/')
-          ? String(chapterPath)
-          : pathBase && chapterPath
-            ? String(pathBase).replace(/\/+$/, '') + '/' + String(chapterPath)
-            : ''
+      const base = absoluteChapterPath(chapterPath, pathBase)
       if (!base) return raw
-      const directory = base.slice(0, base.lastIndexOf('/'))
-      return '/api/file?path=' + encodeURIComponent(normalizePosix(directory + '/' + raw))
+      return '/api/file?path=' + encodeURIComponent(normalizePosix(dirnameOf(base) + '/' + raw))
     }
 
     // ── persisted UI state ────────────────────────────────────────────────
@@ -824,11 +889,17 @@ window.__ModuleLoader__.load({
             h('p', null, state.error),
             h('button', { type: 'button', className: 'dsr-btn', onClick: () => setAttempt((value) => value + 1) }, tr(t, 'retry'))))
       }
-      return h(Reader, { t, book: state.book, config: state.config })
+      const parsedAddress = parseFileAddress(address)
+      return h(Reader, {
+        t,
+        book: state.book,
+        config: state.config,
+        sessionId: parsedAddress ? parsedAddress.sessionId : '',
+      })
     }
 
     // ── reader (shared by file tabs and the bookshelf) ────────────────────
-    function Reader({ t, book, config, onBack, backLabel }) {
+    function Reader({ t, book, config, onBack, backLabel, sessionId }) {
       const chaptersMeta = book.chapters || []
       const bookKey = book.mode === 'library' ? 'lib:' + book.libraryId : 'root:' + (book.bookRoot || '')
       const [loaded, setLoaded] = useState({})
@@ -1017,6 +1088,74 @@ window.__ModuleLoader__.load({
         },
         [chaptersMeta.length, load, showToast],
       )
+
+      const scrollToHeading = useCallback((fragment) => {
+        const root = scrollRef.current
+        if (!root) return
+        let needle = String(fragment || '')
+        try {
+          needle = decodeURIComponent(needle)
+        } catch {
+          /* keep the raw form */
+        }
+        needle = needle.replace(/^#/, '').replace(/-/g, ' ').trim().toLocaleLowerCase()
+        if (needle === '') return
+        const headings = root.querySelectorAll('.dsr-h1, .dsr-h2, .dsr-h3, .dsr-h4, .dsr-h5, .dsr-h6')
+        for (const heading of headings) {
+          if (!heading.textContent.toLocaleLowerCase().includes(needle)) continue
+          try {
+            heading.scrollIntoView({ block: 'start', behavior: 'smooth' })
+          } catch {
+            /* jsdom and old engines */
+          }
+          heading.classList.add('dsr-blockFlash')
+          window.setTimeout(() => heading.classList.remove('dsr-blockFlash'), 1400)
+          return
+        }
+      }, [])
+
+      /**
+       * Markdown links inside a chapter:
+       * - `#heading` scrolls within the chapter;
+       * - same-directory markdown jumps inside this book;
+       * - anything else opens in a new Sidebar tab through the right-Sidebar controller.
+       */
+      const openInternalLink = useCallback((href, chapterPath) => {
+        const resolved = resolveLinkPath(href, chapterPath, config && config.pathBase)
+        if (!resolved || resolved.external) return false
+        if (resolved.unresolved) {
+          showToast(tr(t, 'linkUnresolved'))
+          return true
+        }
+        if (resolved.path === '') {
+          scrollToHeading(resolved.fragment)
+          return true
+        }
+        const current = absoluteChapterPath(chapterPath, config && config.pathBase)
+        const sameDirectory = isMarkdownPath(resolved.path) && dirnameOf(resolved.path) === dirnameOf(current)
+        if (sameDirectory) {
+          const index = chaptersMeta.findIndex(
+            (chapter) => absoluteChapterPath(chapter.chapterPath || chapter.id, config && config.pathBase) === resolved.path,
+          )
+          if (index >= 0) {
+            jumpTo(index)
+            if (resolved.fragment) window.setTimeout(() => scrollToHeading(resolved.fragment), 240)
+            return true
+          }
+        }
+        const controller = sidebarRightRef
+        if (sessionId && controller && typeof controller.openResource === 'function') {
+          try {
+            controller.openResource(sessionFileAddress(sessionId, resolved.path))
+            return true
+          } catch (error) {
+            showToast(String(error && error.message ? error.message : error), true)
+            return true
+          }
+        }
+        showToast(tr(t, 'linkUnavailable'))
+        return true
+      }, [chaptersMeta, config, jumpTo, scrollToHeading, sessionId, showToast, t])
 
       const runSearch = useCallback(async (text) => {
         const query = String(text || '').trim()
@@ -1440,6 +1579,7 @@ window.__ModuleLoader__.load({
                 chapter,
                 index,
                 pathBase: config && config.pathBase,
+                onOpenLink: openInternalLink,
                 onMarkClick: (commentId, rect) => openFormForMark(chapter, commentId, rect),
               })
             }),
@@ -1610,7 +1750,7 @@ window.__ModuleLoader__.load({
     }
 
     // ── one chapter: heading + blocks + annotation highlights ─────────────
-    function ChapterView({ t, chapter, index, onMarkClick, pathBase }) {
+    function ChapterView({ t, chapter, index, onMarkClick, pathBase, onOpenLink }) {
       const blocks = useMemo(() => {
         const parsed = splitBlocks(chapter.text)
         if (parsed.length > 0 && parsed[0].kind === 'h1') parsed.shift()
@@ -1618,6 +1758,7 @@ window.__ModuleLoader__.load({
       }, [chapter.text])
       const comments = chapter.comments || []
       const resolveImage = (src) => imageUrlFor(chapter.chapterPath, src, pathBase)
+      const handleLink = (href) => (typeof onOpenLink === 'function' ? onOpenLink(href, chapter.chapterPath) === true : false)
 
       // Renders one block of text with annotation highlights. `items` are the
       // comments anchored to this paragraph number (1-based).
@@ -1625,7 +1766,7 @@ window.__ModuleLoader__.load({
         const segments = items.length > 0 ? computeSegments(text, items) : [{ text }]
         return segments.map((segment, segmentIndex) => {
           if (segment.id === undefined) {
-            return h(React.Fragment, { key: segmentIndex }, inlineNodes(segment.text, keyPrefix + 's' + segmentIndex, resolveImage))
+            return h(React.Fragment, { key: segmentIndex }, inlineNodes(segment.text, keyPrefix + 's' + segmentIndex, resolveImage, handleLink))
           }
           const comment = items.find((item) => item.id === segment.id)
           return h('mark', {
@@ -1638,7 +1779,7 @@ window.__ModuleLoader__.load({
               const rect = event.currentTarget.getBoundingClientRect()
               onMarkClick(segment.id, { left: rect.left, top: rect.top, bottom: rect.bottom })
             },
-          }, inlineNodes(segment.text, keyPrefix + 'm' + segmentIndex, resolveImage))
+          }, inlineNodes(segment.text, keyPrefix + 'm' + segmentIndex, resolveImage, handleLink))
         })
       }
 
@@ -1671,11 +1812,11 @@ window.__ModuleLoader__.load({
             h('table', { className: 'dsr-table' },
               header.length > 0
                 ? h('thead', null, h('tr', null, header.map((cell, cellIndex) =>
-                    h('th', { key: cellIndex }, inlineNodes(cell, 'th' + blockIndex + '-' + cellIndex, resolveImage)))))
+                    h('th', { key: cellIndex }, inlineNodes(cell, 'th' + blockIndex + '-' + cellIndex, resolveImage, handleLink)))))
                 : null,
               h('tbody', null, rows.map((row, rowIndex) =>
                 h('tr', { key: rowIndex }, row.map((cell, cellIndex) =>
-                  h('td', { key: cellIndex }, inlineNodes(cell, 'td' + blockIndex + '-' + rowIndex + '-' + cellIndex, resolveImage))))))))
+                  h('td', { key: cellIndex }, inlineNodes(cell, 'td' + blockIndex + '-' + rowIndex + '-' + cellIndex, resolveImage, handleLink))))))))
         }
         if (block.kind === 'ul' || block.kind === 'ol') {
           const Tag = block.kind === 'ol' ? 'ol' : 'ul'
@@ -1922,6 +2063,12 @@ window.__ModuleLoader__.load({
       // Exposed for harnesses that render the components outside the app.
       imageUrlFor,
       normalizePosix,
+      resolveLinkPath,
+      sessionFileAddress,
+      absoluteChapterPath,
+      setSidebarRight(value) {
+        sidebarRightRef = value
+      },
       BookBody,
       BookBodyInner,
       BookshelfBody,

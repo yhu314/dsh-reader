@@ -49,6 +49,9 @@ renderer in the existing dropdown, not a replacement.
   paths resolve next to the chapter), and tables render as real HTML tables.
 - **Per-book reading width.** The width button cycles 620 / 760 / 920 px and stores the choice per
   book.
+- **In-book links.** A markdown link to another file in the **same directory** jumps inside the
+  book (`#heading` scrolls to that heading and flashes it); a link to a **different directory or
+  another file** opens in a new Sidebar tab; http(s) links stay with the browser.
 - **An agent tool.** The Host registers `reader_annotations`, so the agent can list a chapter's
   annotations (or only the open ones), and mark them resolved after revising — no copy-paste
   round trip. The tool and the viewer share one store.

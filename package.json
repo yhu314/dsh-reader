@@ -1,6 +1,6 @@
 {
   "name": "dsh_reader",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Continuous markdown book reader with inline annotations for the DeepSeek Harness Web GUI: opens .md files as one scrollable book in the right Sidebar.",
   "type": "module",
   "exports": {
