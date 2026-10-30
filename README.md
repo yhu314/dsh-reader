@@ -1,5 +1,7 @@
 # dsh_reader
 
+English | [中文](README.zh.md)
+
 A DeepSeek Harness (DSH) plugin that adds a **Book** viewer to the built-in document preview.
 
 Opening a markdown file still works exactly as before — the preview opens with **Markdown** (or

@@ -16,7 +16,8 @@
     "locale/*.json",
     "icon.svg",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "README.zh.md"
   ],
   "keywords": [
     "dsh-plugin",
