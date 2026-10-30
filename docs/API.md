@@ -1,7 +1,7 @@
 # dsh_reader host API
 
-The browser half (a **Book** viewer in the built-in document preview, plus a bookshelf page)
-talks to the host half over one prefix: `/api/dsh_reader/*`. Loopback-only, same origin as the Web GUI. Every response is JSON with
+The browser half (a **Book** viewer in the built-in document preview) talks to the host half over
+one prefix: `/api/dsh_reader/*`. Loopback-only, same origin as the Web GUI. Every response is JSON with
 `cache-control: no-store`. Errors: `{ "error": "<message>" }` with 400 / 403 / 404 / 500.
 
 ## Configuration (`cordis.patch.yml` row `dsh_reader`)
@@ -97,7 +97,7 @@ frontmatter order or `null`.
 Opens one markdown file as part of a continuous book. `path` is the decoded path carried by the
 `dsh-resource://file/session/<sessionId>/<path>` address: absolute, or relative to `pathBase`.
 Library mode wins when the file is inside a configured `root`; otherwise the file's directory
-becomes an ad-hoc, read-only book.
+becomes an ad-hoc book (annotated into a `.dsh_reader` sidecar next to it).
 
 ```json
 {
@@ -114,12 +114,12 @@ becomes an ad-hoc, read-only book.
 }
 ```
 
-Ad-hoc mode: `mode: "adhoc"`, `libraryId: null`, `annotationEnabled: false`, chapters are the
+Ad-hoc mode: `mode: "adhoc"`, `libraryId: null`, `annotationEnabled: true`, chapters are the
 markdown files of `bookRoot` (its parent directory) with `id` = file name and absolute
 `chapterPath`s. `index` is the position of `path`. A markdown file inside a library root that the
 chapter list excludes (a draft subfolder, an annotation export, an include/exclude filter) also
-falls back to ad-hoc mode, read-only. 404 only when the path is missing, hidden, or not a markdown
-file.
+falls back to ad-hoc mode, annotated into that folder's own `.dsh_reader`. 404 only when the path
+is missing, hidden, or not a markdown file.
 
 ## `GET /api/dsh_reader/chapter`
 
@@ -157,7 +157,14 @@ Case-insensitive substring search over one book. `lib=<id>` scans a configured l
 One match per chapter (its first hit plus the total count). The browser loads the chapter and jumps
 to the block containing the query, so no offsets need to match across implementations.
 
-## `GET /api/dsh_reader/annotations?lib=<id>&file=<chapter id>`
+## `GET /api/dsh_reader/annotations`
+
+Two forms:
+
+| Query | Mode |
+| --- | --- |
+| `?lib=<id>&file=<chapter id>` | configured library chapter |
+| `?path=<absolute .md path>` | ad-hoc book (the file's own folder) |
 
 ```json
 {
@@ -179,10 +186,13 @@ to the block containing the query, so no offsets need to match across implementa
 
 `block` is a **1-based paragraph number** (the markdown export prints it verbatim); the browser
 converts its 0-based DOM block index when saving. Comments may have `block: null` (whole file).
+Ad-hoc annotations are stored in `<book folder>/.dsh_reader/` instead of the library's
+`annotationDir`.
 
 ## `POST /api/dsh_reader/annotations`
 
 Body: `{ "lib": "zhaoyun", "file": "第001章.md", "op": "save", "comment": { ... } }`
+— or `{ "path": "/abs/path/a.md", "op": "save", "comment": { ... } }` for an ad-hoc book.
 
 | op | extra fields | effect |
 | --- | --- | --- |
@@ -190,8 +200,9 @@ Body: `{ "lib": "zhaoyun", "file": "第001章.md", "op": "save", "comment": { ..
 | `delete` | `id` | remove one comment |
 | `resolve` | `id`, `resolved` (boolean) | set the resolved flag |
 
-The response is the same shape as `GET /annotations` after the write. Annotations are only
-available in library mode; ad-hoc books are read-only.
+The response is the same shape as `GET /annotations` after the write. The `path` form (ad-hoc)
+stores annotations in a `.dsh_reader` sidecar next to the book; the `lib` form uses the library's
+`annotationDir`.
 
 ## Agent tool: `reader_annotations`
 
@@ -222,6 +233,10 @@ drawer, and vice versa.
   `{ "version": 1, "chapters": { "<chapter id>": { "source": "<abs path>", "updatedAt": <ms>, "comments": [...] } } }`
 - `<annotationDir>/<chapter stem>.md` — regenerated markdown export for humans and the agent:
 
+For configured libraries, `annotationDir` is the library's `annotationDir` (default
+`<root>/annotations`). For ad-hoc books, `annotationDir` is the book folder's `.dsh_reader/`
+subdirectory, so a folder opened directly annotates into `<folder>/.dsh_reader/` without any config.
+
 ```md
 # 第001章 军报 — 批注
 
@@ -251,4 +266,5 @@ reset. Request bodies are capped at 1 MiB.
 - Loopback host only; `GET`/`HEAD`/`POST`.
 - Library reads and annotation writes are confined to their `root` / `annotationDir` (path
   traversal, absolute ids, hidden segments, symlink escapes rejected).
-- Ad-hoc reads accept one absolute `.md`/`.markdown` regular file, nothing else.
+- Ad-hoc reads and annotation writes accept one absolute `.md`/`.markdown` regular file; annotations
+  are written only to that file's own directory (`<dir>/.dsh_reader/`).

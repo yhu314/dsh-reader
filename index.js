@@ -11,14 +11,18 @@
 //   GET  /api/dsh_reader/annotations  -> { comments, annotationFile, annotationPath }
 //   POST /api/dsh_reader/annotations  -> same shape, after save/delete/resolve
 //
-// Loopback only: the route reads local files from configured library roots.
-// Every library path coming from the browser is resolved and checked against
-// its root; escapes are rejected with 403. Ad-hoc reads accept one explicit
-// absolute markdown file (exactly what the Sidebar handed us).
+// Loopback only: the route reads local files from configured library roots or
+// from an explicit markdown file path. Every library path coming from the
+// browser is resolved and checked against its root; escapes are rejected with
+// 403. Ad-hoc reads and annotation writes accept one explicit absolute
+// markdown file (exactly what the Sidebar handed us), and write annotations
+// into that file's own `.dsh_reader` sidecar.
 //
 // Annotations live in `<annotationDir>/.dsh_reader.json` (source of truth) and
 // are mirrored to `<annotationDir>/<chapter stem>.md` for humans and agents.
-// Both files are written atomically (tmp file + rename).
+// For configured libraries `annotationDir` comes from config; for ad-hoc books
+// it is the book folder's `.dsh_reader` subdirectory. Both files are written
+// atomically (tmp file + rename).
 
 import {
   mkdir,
@@ -799,7 +803,8 @@ async function listAdhocChapters(absPath) {
  *
  * Library mode wins whenever the file sits inside a configured root; the
  * chapters are the exact `/books` objects for that library. Anything else is
- * read-only ad-hoc mode.
+ * an ad-hoc book made from the file's own directory, annotated into a
+ * `.dsh_reader` sidecar next to it.
  */
 async function resolveBook(settings, rawPath) {
   const { absPath } = await resolveAdhocFile(settings, rawPath);
@@ -822,7 +827,8 @@ async function resolveBook(settings, rawPath) {
     }
     // A markdown file inside a library root that the chapter list excludes
     // (a draft subfolder, an annotation export, an include/exclude filter)
-    // still opens, read-only, as its own ad-hoc book instead of failing.
+    // still opens as its own ad-hoc book (annotated into its own `.dsh_reader`)
+    // instead of failing.
   }
 
   const adhoc = await listAdhocChapters(absPath);
@@ -832,10 +838,67 @@ async function resolveBook(settings, rawPath) {
     path: absPath,
     bookRoot: adhoc.bookRoot,
     libraryId: null,
-    annotationEnabled: false,
+    annotationEnabled: true,
     chapters: adhoc.chapters,
     index,
   };
+}
+
+/**
+ * Resolve a browser-supplied absolute markdown `path` into an ad-hoc
+ * annotation target: the file is the chapter, its directory is the book, and
+ * annotations live in a hidden `.dsh_reader` sidecar next to the book.
+ */
+async function resolveAdhocAnnotationTarget(settings, rawPath) {
+  const { absPath, info } = await resolveAdhocFile(settings, rawPath, {
+    requireAbsolute: true,
+  });
+  const bookRoot = dirname(absPath);
+  const name = basename(absPath);
+  const library = {
+    id: `adhoc:${bookRoot}`,
+    title: basename(bookRoot) || bookRoot,
+    root: bookRoot,
+    annotationDir: join(bookRoot, ".dsh_reader"),
+    locale: settings.annotation.locale,
+    pathBase: settings.pathBase,
+  };
+  const chapter = {
+    absPath,
+    id: name,
+    name,
+    stem: chapterStem(name),
+    size: info.size,
+    mtime: Number.isFinite(info.mtimeMs) ? Math.trunc(info.mtimeMs) : 0,
+  };
+  return { library, chapter };
+}
+
+/** `/annotations` target from a GET query (`lib`+`file`, or `path`). */
+async function annotationTargetFromQuery(settings, url) {
+  const pathParam = url.searchParams.get("path");
+  if (pathParam !== null && pathParam !== "") {
+    return resolveAdhocAnnotationTarget(settings, pathParam);
+  }
+  const libId = url.searchParams.get("lib");
+  if (libId === null || libId === "") {
+    throw new HttpError(400, "missing lib or path parameter");
+  }
+  const library = findLibrary(settings, libId);
+  const chapter = await resolveChapter(library, url.searchParams.get("file"));
+  return { library, chapter };
+}
+
+/** `/annotations` target from a POST body (`lib`+`file`, or `path`). */
+async function annotationTargetFromBody(settings, body) {
+  if (typeof body.path === "string" && body.path !== "") {
+    return resolveAdhocAnnotationTarget(settings, body.path);
+  }
+  const libId = typeof body.lib === "string" ? body.lib : "";
+  if (libId === "") throw new HttpError(400, "missing lib or path");
+  const library = findLibrary(settings, libId);
+  const chapter = await resolveChapter(library, body.file);
+  return { library, chapter };
 }
 
 // ── annotation store ───────────────────────────────────────────────────────
@@ -1272,11 +1335,7 @@ async function handleChapter(settings, url) {
 
 /** `/annotations` (GET): comments plus the paths the browser shows. */
 async function handleAnnotationsList(settings, url) {
-  const libId = url.searchParams.get("lib");
-  const fileParam = url.searchParams.get("file");
-  if (libId === null || libId === "") throw new HttpError(400, "missing lib parameter");
-  const library = findLibrary(settings, libId);
-  const chapter = await resolveChapter(library, fileParam);
+  const { library, chapter } = await annotationTargetFromQuery(settings, url);
 
   const store = await loadAnnotationStore(library.annotationDir);
   const entry = store.chapters[chapter.id];
@@ -1288,10 +1347,7 @@ async function handleAnnotationsWrite(settings, req) {
   const body = await readJsonBody(req);
   if (!isPlainObject(body)) throw new HttpError(400, "request body must be a JSON object");
 
-  const libId = typeof body.lib === "string" ? body.lib : "";
-  if (libId === "") throw new HttpError(400, "missing lib");
-  const library = findLibrary(settings, libId);
-  const chapter = await resolveChapter(library, body.file);
+  const { library, chapter } = await annotationTargetFromBody(settings, body);
 
   const op = body.op;
   if (op !== "save" && op !== "delete" && op !== "resolve") {

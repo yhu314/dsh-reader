@@ -506,7 +506,7 @@ test("GET /resolve opens a library file with the full book and correct index", a
   assert.equal(res.json.path, target);
 });
 
-test("GET /resolve opens a file outside libraries as an ad-hoc read-only book", async () => {
+test("GET /resolve opens a file outside libraries as an ad-hoc book", async () => {
   const target = join(adhocRoot, "b.md");
   let res = await request(client, query("/api/dsh_reader/resolve", { path: target }));
   assert.equal(res.status, 200);
@@ -514,7 +514,7 @@ test("GET /resolve opens a file outside libraries as an ad-hoc read-only book", 
   assert.equal(res.json.path, target);
   assert.equal(res.json.bookRoot, adhocRoot);
   assert.equal(res.json.libraryId, null);
-  assert.equal(res.json.annotationEnabled, false);
+  assert.equal(res.json.annotationEnabled, true);
   assert.equal(res.json.index, 1);
   assert.deepEqual(res.json.chapters, [
     {
@@ -560,7 +560,7 @@ test("GET /resolve falls back to an ad-hoc book for an in-root file the chapter 
   assert.equal(res.json.path, target);
   assert.equal(res.json.bookRoot, join(bookRoot, "草稿"));
   assert.equal(res.json.libraryId, null);
-  assert.equal(res.json.annotationEnabled, false);
+  assert.equal(res.json.annotationEnabled, true);
   assert.ok(res.json.index >= 0);
   // Its read-only chapter form is reachable through /chapter?path=.
   const chapter = await request(client, query("/api/dsh_reader/chapter", { path: target }));
@@ -831,6 +831,47 @@ test("annotationPath is absolute when pathBase is not configured", async () => {
   );
   assert.equal(res.status, 200);
   assert.equal(res.json.annotationPath, join(annotationDir, "第001章.md"));
+});
+
+test("ad-hoc files can be annotated into a .dsh_reader sidecar", async () => {
+  const target = join(adhocRoot, "a.md");
+
+  // Empty at first.
+  let res = await request(client, query("/api/dsh_reader/annotations", { path: target }));
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.json.comments, []);
+  assert.equal(res.json.annotationFile, "a.md");
+
+  // Create an annotation by absolute path.
+  res = await request(client, "/api/dsh_reader/annotations", {
+    method: "POST",
+    body: {
+      path: target,
+      op: "save",
+      comment: { quote: "A 正文", block: 1, note: "这一句要改。" },
+    },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.json.comments.length, 1);
+  assert.equal(res.json.comments[0].id, "A1");
+  assert.equal(res.json.comments[0].note, "这一句要改。");
+
+  // The sidecar store and export live next to the book.
+  const store = JSON.parse(
+    await readFile(join(adhocRoot, ".dsh_reader", ".dsh_reader.json"), "utf8"),
+  );
+  assert.equal(store.chapters["a.md"].source, target);
+  assert.equal(store.chapters["a.md"].comments.length, 1);
+
+  const markdown = await readFile(join(adhocRoot, ".dsh_reader", "a.md"), "utf8");
+  assert.match(markdown, /^# A 章 — 批注\n/);
+  assert.match(markdown, /这一句要改。/);
+
+  // Reading it back returns the same list.
+  res = await request(client, query("/api/dsh_reader/annotations", { path: target }));
+  assert.equal(res.status, 200);
+  assert.equal(res.json.comments.length, 1);
+  assert.equal(res.json.comments[0].id, "A1");
 });
 
 // ── limits and config errors ───────────────────────────────────────────────

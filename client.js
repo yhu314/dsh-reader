@@ -706,117 +706,8 @@ window.__ModuleLoader__.load({
         h('path', { d: 'M2 8h12M4.2 5.8L2 8l2.2 2.2M11.8 5.8L14 8l-2.2 2.2', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round', strokeLinejoin: 'round' }))
     }
 
-    // ── left-Sidebar entry → bookshelf page in the right Sidebar ──────────
+    // ── right-Sidebar controller (opens linked resources in new tabs) ─────
     let sidebarRightRef = null
-    function openBookshelf() {
-      const controller = sidebarRightRef
-      if (!controller || typeof controller.openTab !== 'function') return
-      try {
-        controller.openTab('dsh_reader/books')
-      } catch {
-        /* no on-screen session: the Sidebar cannot open */
-      }
-    }
-    function OpenButton({ t, wide, useSessions }) {
-      let currentSession = null
-      try {
-        currentSession = typeof useSessions === 'function' ? useSessions((state) => state.current) : null
-      } catch {
-        currentSession = null
-      }
-      const onlySessions = configValue && Array.isArray(configValue.sessions) ? configValue.sessions : []
-      if (onlySessions.length > 0 && currentSession && !onlySessions.includes(currentSession)) return null
-      const label = tr(t, 'openReader')
-      return h('button', {
-        type: 'button',
-        className: 'dsr-openBtn',
-        title: label,
-        'aria-label': label,
-        style: wide ? undefined : { justifyContent: 'center', padding: 0 },
-        onClick: openBookshelf,
-      }, h(IconBook, { size: wide ? 14 : 18 }), wide ? h('span', null, label) : null)
-    }
-
-    // ── bookshelf page (page tab body) ────────────────────────────────────
-    function BookshelfBody(props) {
-      const t = props.t
-      const [state, setState] = useState({ status: 'loading' })
-      const [expanded, setExpanded] = useState('')
-      const [active, setActive] = useState(null)
-
-      const load = useCallback(async () => {
-        setState({ status: 'loading' })
-        try {
-          const data = await callApi('/books')
-          setState({ status: 'ready', data })
-          const first = (data.libraries || [])[0]
-          if (first) setExpanded((current) => current || first.id)
-        } catch (error) {
-          setState({ status: 'error', error: String(error && error.message ? error.message : error) })
-        }
-      }, [])
-      useEffect(() => {
-        load()
-      }, [load])
-
-      if (active) {
-        return h(Reader, { t, book: active, config: configValue, onBack: () => setActive(null), backLabel: tr(t, 'shelf') })
-      }
-      if (state.status === 'loading') {
-        return h('div', { className: 'dsr-root' }, h('div', { className: 'dsr-empty' }, tr(t, 'loading')))
-      }
-      if (state.status === 'error') {
-        return h('div', { className: 'dsr-root' },
-          h('div', { className: 'dsr-empty' },
-            h('div', null, tr(t, 'error') + '：' + state.error),
-            h('div', { style: { marginTop: 10 } },
-              h('button', { type: 'button', className: 'dsr-btn', onClick: load }, tr(t, 'retry')))))
-      }
-      const libraries = (state.data && state.data.libraries) || []
-      const errors = (state.data && state.data.errors) || []
-      if (libraries.length === 0) {
-        return h('div', { className: 'dsr-root' },
-          h('div', { className: 'dsr-setup' },
-            h('h2', null, tr(t, 'setupTitle')),
-            h('p', null, tr(t, 'setupBody')),
-            errors.length > 0
-              ? h('div', null, h('div', null, tr(t, 'setupErrors')),
-                  h('ul', null, errors.map((message, index) => h('li', { key: index }, String(message)))))
-              : null))
-      }
-      return h('div', { className: 'dsr-root' },
-        h('div', { className: 'dsr-bar' },
-          h('div', { className: 'dsr-title' }, tr(t, 'shelf')),
-          h('div', { style: { flex: 1 } }),
-          h('span', { className: 'dsr-count' }, libraries.length + ' ' + tr(t, 'chapterCount'))),
-        h('div', { className: 'dsr-scroll' },
-          libraries.map((library) => {
-            const isOpen = expanded === library.id
-            return h('div', { key: library.id },
-              h('div', { className: 'dsr-book', onClick: () => setExpanded(isOpen ? '' : library.id) },
-                h(IconChevron, { dir: isOpen ? 'down' : 'right' }),
-                h('span', { className: 'dsr-bookTitle' }, library.title),
-                h('span', { className: 'dsr-bookMeta' }, (library.chapters || []).length + ' ' + tr(t, 'chapterCount'))),
-              isOpen
-                ? (library.chapters || []).map((chapter, index) =>
-                    h('div', {
-                      key: chapter.id,
-                      className: 'dsr-chapterRow',
-                      onClick: () => setActive({
-                        mode: 'library',
-                        libraryId: library.id,
-                        bookRoot: library.root,
-                        annotationEnabled: true,
-                        chapters: library.chapters,
-                        index,
-                        restore: true,
-                      }),
-                    },
-                      h('span', { className: 'dsr-chapterNoB' }, index + 1),
-                      h('span', { className: 'dsr-chapterName' }, chapter.title || chapter.id)))
-                : null)
-          })))
-    }
 
     // ── Book viewer body (registered into the built-in document preview) ──
     // The document preview hands every renderer a `resourceAddress`, the tab
@@ -972,8 +863,10 @@ window.__ModuleLoader__.load({
                 ? `/chapter?lib=${enc(book.libraryId)}&file=${enc(meta.id)}`
                 : `/chapter?path=${enc(meta.chapterPath)}`
             const annotationQuery =
-              book.mode === 'library' && book.annotationEnabled
-                ? `/annotations?lib=${enc(book.libraryId)}&file=${enc(meta.id)}`
+              book.annotationEnabled
+                ? book.mode === 'library'
+                  ? `/annotations?lib=${enc(book.libraryId)}&file=${enc(meta.id)}`
+                  : `/annotations?path=${enc(meta.chapterPath)}`
                 : null
             const [chapterData, annotationData] = await Promise.all([
               callApi(chapterQuery),
@@ -1492,11 +1385,15 @@ window.__ModuleLoader__.load({
       const saveComment = useCallback(
         async (payload) => {
           const chapter = Object.values(loadedRef.current).find((item) => item.id === payload.chapterId)
-          if (!chapter || book.mode !== 'library') return
+          if (!chapter || !book.annotationEnabled) return
+          const writeBody =
+            book.mode === 'library'
+              ? { lib: book.libraryId, file: chapter.id, op: 'save', comment: payload.comment }
+              : { path: chapter.chapterPath, op: 'save', comment: payload.comment }
           try {
             const result = await callApi('/annotations', {
               method: 'POST',
-              body: JSON.stringify({ lib: book.libraryId, file: chapter.id, op: 'save', comment: payload.comment }),
+              body: JSON.stringify(writeBody),
             })
             applyComments(chapter.id, result.comments || [])
             setForm(null)
@@ -1505,15 +1402,21 @@ window.__ModuleLoader__.load({
             showToast(String(caught && caught.message ? caught.message : caught), true)
           }
         },
-        [applyComments, book.libraryId, book.mode, showToast, t],
+        [applyComments, book.annotationEnabled, book.libraryId, book.mode, showToast, t],
       )
 
       const mutateComment = useCallback(
         async (chapterId, op, id, resolved) => {
+          const chapter = Object.values(loadedRef.current).find((item) => item.id === chapterId)
+          if (!chapter) return
+          const writeBody =
+            book.mode === 'library'
+              ? { lib: book.libraryId, file: chapterId, op, id, resolved }
+              : { path: chapter.chapterPath, op, id, resolved }
           try {
             const result = await callApi('/annotations', {
               method: 'POST',
-              body: JSON.stringify({ lib: book.libraryId, file: chapterId, op, id, resolved }),
+              body: JSON.stringify(writeBody),
             })
             applyComments(chapterId, result.comments || [])
             if (op === 'delete') setForm(null)
@@ -1521,7 +1424,7 @@ window.__ModuleLoader__.load({
             showToast(String(caught && caught.message ? caught.message : caught), true)
           }
         },
-        [applyComments, book.libraryId, showToast],
+        [applyComments, book.libraryId, book.mode, showToast],
       )
 
       const copyPrompt = useCallback(async () => {
@@ -1945,9 +1848,6 @@ window.__ModuleLoader__.load({
     function BookSlotBody(props) {
       return h(ReaderErrorBoundary, null, h(BookBody, props))
     }
-    function ShelfTabBody(props) {
-      return h(ReaderErrorBoundary, null, h(BookshelfBody, props))
-    }
     // Tabs saved by the earlier resource-tab design are re-opened as this
     // compatibility page instead of an unregistered kind.
     function LegacyTabBody(props) {
@@ -1955,7 +1855,6 @@ window.__ModuleLoader__.load({
     }
 
     // ── plugin body ───────────────────────────────────────────────────────
-    const BOOKS_ID = 'dsh_reader/books'
     const LEGACY_TAB_ID = 'dsh_reader/reader'
     const BOOK_VIEWER_ID = 'dsh_reader/book'
     const inject = ['slots', 'locale', 'documentPreviews', 'sidebarRight', 'sidebarRightTabs']
@@ -2022,32 +1921,6 @@ window.__ModuleLoader__.load({
           { name: 'sidebar.right.pane.tab', key: LEGACY_TAB_ID, locale: NS },
           LegacyTabBody,
         ))
-
-      // Bookshelf page: opened from the left Sidebar; lists libraries and
-      // chapters and opens them in place.
-      ctx.effect(
-        () =>
-          ctx.sidebarRightTabs.register({
-            id: BOOKS_ID,
-            kind: BOOKS_ID,
-            title: () => t('shelf'),
-          }),
-        'dsh_reader: bookshelf tab type',
-      )
-      ctx.slots.inject('sidebar.right.pane.tab', () =>
-        ctx.slots.register(
-          { name: 'sidebar.right.pane.tab', key: BOOKS_ID, locale: NS },
-          ShelfTabBody,
-        ))
-
-      ctx.effect(
-        () =>
-          ctx.slots.register(
-            { name: 'sidebar.footer.action', id: 'dsh_reader-open', order: 24, locale: NS },
-            OpenButton,
-          ),
-        'dsh_reader: sidebar entry',
-      )
     }
 
     exports.apply = apply
@@ -2071,11 +1944,9 @@ window.__ModuleLoader__.load({
       },
       BookBody,
       BookBodyInner,
-      BookshelfBody,
       Reader,
       ChapterView,
       AnnotationForm,
-      OpenButton,
       ReaderErrorBoundary,
     }
     return module.exports

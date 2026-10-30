@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 // The client module is a classic script that hands its factory to the page's
 // module loader. Stub that contract so the pure helpers can be exercised in
@@ -36,7 +36,7 @@ const requireStub = (id) => {
 }
 
 const clientPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'client.js')
-await import(clientPath)
+await import(pathToFileURL(clientPath).href)
 
 test('client module registers with the module loader', () => {
   assert.ok(captured, 'window.__ModuleLoader__.load was not called')

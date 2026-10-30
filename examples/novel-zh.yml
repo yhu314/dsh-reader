@@ -1,5 +1,10 @@
 # Example: a Chinese novel kept as one markdown file per chapter.
 #
+# This configuration is optional: with no `libraries` block at all, any opened
+# markdown folder already works as a book with annotations in
+# `<folder>/.dsh_reader/`. Configure a library only when you want a dedicated
+# annotation directory or the `reader_annotations` agent tool.
+#
 # Append this to your profile patch layer, i.e.
 #   ~/.dsh/profiles/<profile>/cordis.patch.yml
 # and replace the paths with your own. The profile patch must stay a top-level
