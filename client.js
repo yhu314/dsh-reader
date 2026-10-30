@@ -33,9 +33,7 @@ window.__ModuleLoader__.load({
       resolve: '结案',
       reopen: '重新打开',
       resolved: '已结案',
-      type: '类型',
-      conclusion: '结论',
-      notePlaceholder: '写下你的意见…',
+      notePlaceholder: '写下这条批注…',
       edit: '编辑',
       noAnnotations: '这一章还没有批注',
       readOnly: '只读：这个目录不是已配置的书库，配置后可批注',
@@ -81,9 +79,7 @@ window.__ModuleLoader__.load({
       resolve: 'Resolve',
       reopen: 'Reopen',
       resolved: 'Resolved',
-      type: 'Type',
-      conclusion: 'Conclusion',
-      notePlaceholder: 'Write your note…',
+      notePlaceholder: 'Write the annotation…',
       edit: 'Edit',
       noAnnotations: 'No annotations in this chapter yet',
       readOnly: 'Read-only: this folder is not a configured library',
@@ -1110,7 +1106,6 @@ window.__ModuleLoader__.load({
               key: form.mode + ':' + (form.comment ? form.comment.id : 'new:' + String(form.block) + ':' + form.quote),
               t,
               form,
-              annotation: (config && config.annotation) || {},
               onCancel: () => setForm(null),
               onSave: saveComment,
               onDelete: form.mode === 'edit' ? () => mutateComment(form.chapterId, 'delete', form.comment.id) : null,
@@ -1192,8 +1187,6 @@ window.__ModuleLoader__.load({
       return h('div', { ref, className: 'dsr-ann', onClick: () => onOpen(rectOf()) },
         h('div', { className: 'dsr-annTop' },
           h('span', { className: 'dsr-annId' }, comment.id),
-          comment.type ? h('span', { className: 'dsr-badge dsr-badgeBrand' }, comment.type) : null,
-          comment.conclusion ? h('span', { className: 'dsr-badge' }, comment.conclusion) : null,
           comment.resolved ? h('span', { className: 'dsr-badge dsr-badgeMuted' }, tr(t, 'resolved')) : null,
           h('span', { style: { flex: 1 } }),
           h('span', { className: 'dsr-annId' }, formatBlockLabel(t, comment.block))),
@@ -1205,11 +1198,7 @@ window.__ModuleLoader__.load({
     }
 
     // ── comment form popover ──────────────────────────────────────────────
-    function AnnotationForm({ t, form, annotation, onCancel, onSave, onDelete }) {
-      const types = annotation.types && annotation.types.length > 0 ? annotation.types : ['note']
-      const conclusions = annotation.conclusions && annotation.conclusions.length > 0 ? annotation.conclusions : ['']
-      const [type, setType] = useState(form.comment ? form.comment.type : types[0])
-      const [conclusion, setConclusion] = useState(form.comment ? form.comment.conclusion : conclusions[0])
+    function AnnotationForm({ t, form, onCancel, onSave, onDelete }) {
       const [note, setNote] = useState(form.comment ? form.comment.note || '' : '')
       const areaRef = useRef(null)
       useEffect(() => {
@@ -1227,15 +1216,6 @@ window.__ModuleLoader__.load({
           h('span', { style: { flex: 1 } }),
           form.comment ? h('span', { className: 'dsr-annId' }, form.comment.id) : null),
         form.quote ? h('div', { className: 'dsr-quoted' }, '「' + form.quote + '」') : null,
-        h('div', { className: 'dsr-row' },
-          h('div', { className: 'dsr-field' },
-            h('label', { className: 'dsr-label' }, tr(t, 'type')),
-            h('select', { className: 'dsr-input', value: type, onChange: (event) => setType(event.target.value) },
-              types.map((item) => h('option', { key: item, value: item }, item)))),
-          h('div', { className: 'dsr-field' },
-            h('label', { className: 'dsr-label' }, tr(t, 'conclusion')),
-            h('select', { className: 'dsr-input', value: conclusion, onChange: (event) => setConclusion(event.target.value) },
-              conclusions.map((item) => h('option', { key: item, value: item }, item || '—'))))),
         h('div', { className: 'dsr-field' },
           h('label', { className: 'dsr-label' }, tr(t, 'notePlaceholder')),
           h('textarea', {
@@ -1257,8 +1237,6 @@ window.__ModuleLoader__.load({
               chapterId: form.chapterId,
               comment: {
                 ...(form.comment ? { id: form.comment.id } : {}),
-                type,
-                conclusion,
                 note: note.trim(),
                 quote: form.quote,
                 block: form.block,

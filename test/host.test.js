@@ -128,11 +128,7 @@ const baseConfig = () => ({
       annotationDir,
     },
   ],
-  annotation: {
-    types: ["事实", "逻辑", "文风", "结构", "删减", "疑问"],
-    conclusions: ["采纳", "驳回", "转细纲", "暂缓"],
-    locale: "zh",
-  },
+  annotation: { locale: "zh" },
   pathBase: workspace,
   promptTemplate: "请按 {annotationFile} 中的批注修改 {chapterFile}。",
   maxChapterBytes: 1024 * 1024,
@@ -146,7 +142,7 @@ const metaConfig = (order) => ({
       ...(order === undefined ? {} : { order }),
     },
   ],
-  annotation: { types: ["note"], conclusions: ["accept"], locale: "zh" },
+  annotation: { locale: "zh" },
   pathBase: workspace,
 });
 
@@ -242,11 +238,7 @@ test("GET /config exposes neutral defaults and no chapter data", async () => {
   assert.equal(res.status, 200);
   assert.match(res.json.version, /^\d+\.\d+\.\d+/);
   assert.equal(res.json.pathBase, null);
-  assert.deepEqual(res.json.annotation, {
-    types: ["note", "question", "fix", "idea"],
-    conclusions: ["accept", "reject", "defer"],
-    locale: "zh",
-  });
+  assert.deepEqual(res.json.annotation, { locale: "zh" });
   assert.equal(
     res.json.promptTemplate,
     "请按 {annotationFile} 中的批注修改 {chapterFile}。",
@@ -324,7 +316,6 @@ test("GET /books sorts naturally, extracts titles and skips noise", async () => 
   assert.equal(typeof first.mtime, "number");
   assert.ok(Number.isInteger(first.mtime));
 
-  assert.deepEqual(res.json.annotation.types, baseConfig().annotation.types);
   assert.equal(res.json.annotation.locale, "zh");
   assert.equal(
     res.json.promptTemplate,
@@ -666,8 +657,6 @@ test("annotations: create, list, resolve, delete, and regenerate markdown", asyn
       file: "第001章.md",
       op: "save",
       comment: {
-        type: "文风",
-        conclusion: "采纳",
         quote: "血泼了他一脸",
         block: 12,
         note: "这一句太轻。",
@@ -679,8 +668,6 @@ test("annotations: create, list, resolve, delete, and regenerate markdown", asyn
 
   const a1 = res.json.comments[0];
   assert.equal(a1.id, "A1");
-  assert.equal(a1.type, "文风");
-  assert.equal(a1.conclusion, "采纳");
   assert.equal(a1.block, 12);
   assert.equal(a1.resolved, false);
   assert.equal(typeof a1.createdAt, "number");
@@ -695,8 +682,6 @@ test("annotations: create, list, resolve, delete, and regenerate markdown", asyn
       file: "第001章.md",
       op: "save",
       comment: {
-        type: "逻辑",
-        conclusion: "暂缓",
         block: 3,
         note: "需要核对 | 这里",
       },
@@ -731,12 +716,12 @@ test("annotations: create, list, resolve, delete, and regenerate markdown", asyn
   assert.match(markdown, /> 源文件：`第001章\.md`/);
   assert.match(markdown, /> 机器可读数据：`\.dsh_reader\.json`/);
   assert.match(markdown, /\n共 2 条，未结案 2 条。\n/);
-  assert.match(markdown, /\| 编号 \| 位置 \| 类型 \| 内容 \| 结论 \| 状态 \|/);
-  assert.match(markdown, /\| A1 \| 第 12 段 \| 文风 \| 这一句太轻。 \| 采纳 \| 未结案 \|/);
+  assert.match(markdown, /\| 编号 \| 位置 \| 内容 \| 状态 \|/);
+  assert.match(markdown, /\| A1 \| 第 12 段 \| 这一句太轻。 \| 未结案 \|/);
   assert.match(markdown, /## 明细/);
-  assert.match(markdown, /### A1｜第 12 段｜文风｜采纳/);
+  assert.match(markdown, /### A1｜第 12 段/);
   assert.match(markdown, /> 原文：「血泼了他一脸」/);
-  assert.match(markdown, /\| A2 \| 第 3 段 \| 逻辑 \| 需要核对 \\\| 这里 \| 暂缓 \| 未结案 \|/);
+  assert.match(markdown, /\| A2 \| 第 3 段 \| 需要核对 \\\| 这里 \| 未结案 \|/);
   assert.ok(!markdown.includes("\r"), "generated markdown must use \\n newlines");
   assert.ok(markdown.endsWith("\n"));
 
@@ -752,7 +737,7 @@ test("annotations: create, list, resolve, delete, and regenerate markdown", asyn
   assert.match(markdown, /共 2 条，未结案 1 条。/);
   assert.match(
     markdown,
-    /\| A2 \| 第 3 段 \| 逻辑 \| 需要核对 \\\| 这里 \| 暂缓 \| 已结案 \|/,
+    /\| A2 \| 第 3 段 \| 需要核对 \\\| 这里 \| 已结案 \|/,
   );
 
   // Delete A1.
@@ -777,7 +762,7 @@ test("annotations: create, list, resolve, delete, and regenerate markdown", asyn
       lib: "test-book",
       file: "第001章.md",
       op: "save",
-      comment: { type: "事实", conclusion: "驳回", block: 1, note: "追加一条。" },
+      comment: { block: 1, note: "追加一条。" },
     },
   });
   assert.equal(res.status, 200);
@@ -814,8 +799,6 @@ test("annotation.locale en localizes generated markdown", async () => {
       file: "第002章.md",
       op: "save",
       comment: {
-        type: "文风",
-        conclusion: "采纳",
         quote: "血泼了他一脸",
         block: 5,
         note: "这一句太轻。",
@@ -832,8 +815,8 @@ test("annotation.locale en localizes generated markdown", async () => {
   assert.match(markdown, /^# 第002章 — Annotations\n/);
   assert.match(markdown, /> Source file: `第002章\.md`/);
   assert.match(markdown, /\n1 comment, 1 open\.\n/);
-  assert.match(markdown, /\| ID \| Location \| Type \| Content \| Conclusion \| Status \|/);
-  assert.match(markdown, /### A1 · Paragraph 5 · 文风 · 采纳/);
+  assert.match(markdown, /\| ID \| Location \| Note \| Status \|/);
+  assert.match(markdown, /### A1 · Paragraph 5/);
   assert.match(markdown, /> Quote: “/);
 });
 

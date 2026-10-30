@@ -44,8 +44,6 @@ const DEFAULT_MAX_CHAPTER_BYTES = 2 * 1024 * 1024;
 const FALLBACK_VERSION = "0.1.0";
 const DEFAULT_PROMPT_TEMPLATE_ZH = "请按 {annotationFile} 中的批注修改 {chapterFile}。";
 const DEFAULT_PROMPT_TEMPLATE_EN = "Revise {chapterFile} according to {annotationFile}.";
-const DEFAULT_TYPES = ["note", "question", "fix", "idea"];
-const DEFAULT_CONCLUSIONS = ["accept", "reject", "defer"];
 const CHAPTER_ORDERS = new Set(["auto", "filename", "mtime"]);
 const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/;
 const MARKDOWN_FILE = /\.(?:md|markdown)$/i;
@@ -112,15 +110,6 @@ function normalizeNewlines(value) {
   return String(value ?? "").replace(/\r\n?/g, "\n");
 }
 
-/** First non-empty string array, falling back to a copy of `fallback`. */
-function stringArray(value, fallback) {
-  if (!Array.isArray(value)) return [...fallback];
-  const cleaned = value
-    .filter((item) => typeof item === "string" && item.trim() !== "")
-    .map((item) => item.trim());
-  return cleaned.length > 0 ? cleaned : [...fallback];
-}
-
 // ── config normalization ───────────────────────────────────────────────────
 
 /**
@@ -134,7 +123,7 @@ function stringArray(value, fallback) {
  * @returns {{
  *   libraries: Array<object>,
  *   errors: string[],
- *   annotation: { types: string[], conclusions: string[], locale: "zh"|"en" },
+ *   annotation: { locale: "zh"|"en" },
  *   pathBase: string|null,
  *   promptTemplate: string,
  *   maxChapterBytes: number,
@@ -149,8 +138,6 @@ function normalizeConfig(config) {
 
   const annotationSource = isPlainObject(source.annotation) ? source.annotation : {};
   const annotation = {
-    types: stringArray(annotationSource.types, DEFAULT_TYPES),
-    conclusions: stringArray(annotationSource.conclusions, DEFAULT_CONCLUSIONS),
     locale:
       typeof annotationSource.locale === "string" &&
       annotationSource.locale.toLowerCase().startsWith("en")
@@ -862,8 +849,6 @@ function emptyStore() {
 function normalizeComment(raw) {
   return {
     id: String(raw.id),
-    type: typeof raw.type === "string" ? raw.type : "",
-    conclusion: typeof raw.conclusion === "string" ? raw.conclusion : "",
     quote: typeof raw.quote === "string" ? raw.quote : "",
     block: Number.isFinite(raw.block) ? Math.trunc(raw.block) : null,
     note: typeof raw.note === "string" ? raw.note : "",
@@ -966,28 +951,14 @@ function positionLabel(comment, chinese) {
   return chinese ? "全文" : "Whole text";
 }
 
-function typeLabel(comment, chinese) {
-  return comment.type !== "" ? comment.type : chinese ? "未分类" : "Uncategorized";
-}
-
-function conclusionLabel(comment, chinese) {
-  return comment.conclusion !== "" ? comment.conclusion : chinese ? "未定" : "Undecided";
-}
-
 function statusLabel(comment, chinese) {
   if (comment.resolved) return chinese ? "已结案" : "Resolved";
   return chinese ? "未结案" : "Open";
 }
 
-/** `A1｜第 12 段｜文风｜采纳` (or the ` · ` form in English). */
+/** `A1｜第 12 段` (or the ` · ` form in English). */
 function detailHeading(comment, chinese) {
-  const parts = [
-    comment.id,
-    positionLabel(comment, chinese),
-    typeLabel(comment, chinese),
-    conclusionLabel(comment, chinese),
-  ];
-  return parts.join(chinese ? "｜" : " · ");
+  return [comment.id, positionLabel(comment, chinese)].join(chinese ? "｜" : " · ");
 }
 
 /**
@@ -1024,17 +995,15 @@ function renderAnnotationMarkdown({ title, chapterId, comments, locale }) {
   lines.push("");
 
   const headers = chinese
-    ? ["编号", "位置", "类型", "内容", "结论", "状态"]
-    : ["ID", "Location", "Type", "Content", "Conclusion", "Status"];
+    ? ["编号", "位置", "内容", "状态"]
+    : ["ID", "Location", "Note", "Status"];
   lines.push(`| ${headers.join(" | ")} |`);
   lines.push(`| ${headers.map(() => "---").join(" | ")} |`);
   for (const comment of comments) {
     const cells = [
       comment.id,
       positionLabel(comment, chinese),
-      typeLabel(comment, chinese),
       comment.note,
-      conclusionLabel(comment, chinese),
       statusLabel(comment, chinese),
     ];
     lines.push(`| ${cells.map(escapeTableCell).join(" | ")} |`);
@@ -1086,8 +1055,6 @@ function nextCommentId(comments) {
 /** Pick only the comment fields a client is allowed to set. */
 function sanitizeCommentFields(input) {
   const fields = {};
-  if (typeof input.type === "string") fields.type = input.type.trim();
-  if (typeof input.conclusion === "string") fields.conclusion = input.conclusion.trim();
   if (typeof input.quote === "string") fields.quote = input.quote;
   if (typeof input.note === "string") fields.note = input.note;
   if (typeof input.block === "number" && Number.isFinite(input.block)) {
@@ -1127,11 +1094,7 @@ async function handleConfig(settings) {
   return {
     version: await readOwnVersion(),
     pathBase: settings.pathBase,
-    annotation: {
-      types: [...settings.annotation.types],
-      conclusions: [...settings.annotation.conclusions],
-      locale: settings.annotation.locale,
-    },
+    annotation: { locale: settings.annotation.locale },
     promptTemplate: settings.promptTemplate,
     libraries: settings.libraries.map((library) => ({
       id: library.id,
@@ -1166,11 +1129,7 @@ async function handleBooks(settings) {
   }
   return {
     libraries,
-    annotation: {
-      types: [...settings.annotation.types],
-      conclusions: [...settings.annotation.conclusions],
-      locale: settings.annotation.locale,
-    },
+    annotation: { locale: settings.annotation.locale },
     promptTemplate: settings.promptTemplate,
     errors,
   };

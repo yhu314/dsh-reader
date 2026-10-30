@@ -17,8 +17,6 @@ libraries:
     exclude: ['^草稿/']          # optional
     order: auto                  # auto | filename | mtime
 annotation:
-  types: [note, question, fix, idea]           # neutral defaults
-  conclusions: [accept, reject, defer]         # neutral defaults
   locale: zh                     # zh | en, headings of the generated markdown
 pathBase: /abs/path/project      # workspace root: resolves workspace-relative addresses,
                                  # and shortens paths in prompts
@@ -52,7 +50,7 @@ The browser needs this before it can decide which addresses to claim and how to 
 {
   "version": "0.1.0",
   "pathBase": "/abs/path/project",
-  "annotation": { "types": ["note"], "conclusions": ["accept"], "locale": "zh" },
+  "annotation": { "locale": "zh" },
   "promptTemplate": "...",
   "libraries": [
     { "id": "zhaoyun", "title": "赵云传", "root": "/abs/path/04_正文", "annotationDir": "/abs/path/06_批注" }
@@ -85,7 +83,7 @@ The browser needs this before it can decide which addresses to claim and how to 
       ]
     }
   ],
-  "annotation": { "types": ["note"], "conclusions": ["accept"], "locale": "zh" },
+  "annotation": { "locale": "zh" },
   "promptTemplate": "...",
   "errors": []
 }
@@ -141,8 +139,6 @@ Oversized chapters fail with 400 instead of truncating (`maxChapterBytes`).
   "comments": [
     {
       "id": "A1",
-      "type": "style",
-      "conclusion": "accept",
       "quote": "血泼了他一脸",
       "block": 12,
       "note": "This sentence is too light.",
@@ -165,7 +161,7 @@ Body: `{ "lib": "zhaoyun", "file": "第001章.md", "op": "save", "comment": { ..
 
 | op | extra fields | effect |
 | --- | --- | --- |
-| `save` | `comment` (omit `id` to create) | create or replace one comment |
+| `save` | `comment` = `{ quote, block, note, resolved }` (omit `id` to create) | create or replace one comment |
 | `delete` | `id` | remove one comment |
 | `resolve` | `id`, `resolved` (boolean) | set the resolved flag |
 
@@ -186,13 +182,13 @@ available in library mode; ad-hoc books are read-only.
 
 共 1 条，未结案 1 条。
 
-| 编号 | 位置 | 类型 | 内容 | 结论 | 状态 |
-| --- | --- | --- | --- | --- | --- |
-| A1 | 第 12 段 | 文风 | 这一句太轻。 | 采纳 | 未结案 |
+| 编号 | 位置 | 内容 | 状态 |
+| --- | --- | --- | --- |
+| A1 | 第 12 段 | 这一句太轻。 | 未结案 |
 
 ## 明细
 
-### A1｜第 12 段｜文风｜采纳
+### A1｜第 12 段
 
 > 原文：「血泼了他一脸」
 

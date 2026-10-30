@@ -30,8 +30,9 @@ renderer in the existing dropdown, not a replacement.
 - **A bookshelf / directory.** The left Sidebar's **阅读** entry opens a page listing every
   configured library and its chapters; clicking a chapter reads it in place. Inside the reader a
   **目录** drawer lists the whole book.
-- **Inline annotations.** Select text → annotate → pick a type and a conclusion → save. Existing
-  annotations are highlighted in the text; the drawer lists them and jumps back to the passage.
+- **Inline annotations.** Select text → write the note → save. Existing annotations are highlighted
+  in the text; the drawer lists them and jumps back to the passage. No type or conclusion to pick —
+  the note is the whole annotation.
 - **Annotations are plain project files.** Each chapter's annotations are written to
   `<annotationDir>/<chapter>.md` (human- and agent-readable) with a machine-readable
   `.dsh_reader.json` beside them. No database, no lock-in, git-friendly.
@@ -82,8 +83,6 @@ A book is a directory of markdown files. Add to your profile's `cordis.patch.yml
         exclude: ['^drafts/']
         order: auto
     annotation:
-      types: [note, question, fix, idea]
-      conclusions: [accept, reject, defer]
       locale: zh            # zh | en — headings of generated markdown
     pathBase: '/Users/you/Novel'   # workspace root; makes prompt paths relative
     promptTemplate: 'Revise {chapterFile} according to the annotations in {annotationFile}.'
@@ -97,7 +96,6 @@ A book is a directory of markdown files. Add to your profile's `cordis.patch.yml
 | `libraries[].recursive` | include subfolders; default `false` |
 | `libraries[].include` / `exclude` | RegExp sources matched against the relative path |
 | `libraries[].order` | `auto` (frontmatter `order`, then natural name), `filename`, or `mtime` |
-| `annotation.types` / `conclusions` | annotation vocabulary offered in the form |
 | `annotation.locale` | `zh` (default) or `en` for generated markdown |
 | `pathBase` | workspace root: resolves workspace-relative addresses, shortens prompt paths |
 | `promptTemplate` | copied by **Send to chat**; `{annotationFile}`, `{chapterFile}` |
@@ -119,13 +117,13 @@ The bookshelf page only lists configured libraries.
 
 共 1 条，未结案 1 条。
 
-| 编号 | 位置 | 类型 | 内容 | 结论 | 状态 |
-| --- | --- | --- | --- | --- | --- |
-| A1 | 第 12 段 | note | 这一句太轻。 | accept | 未结案 |
+| 编号 | 位置 | 内容 | 状态 |
+| --- | --- | --- | --- |
+| A1 | 第 12 段 | 这一句太轻。 | 未结案 |
 
 ## 明细
 
-### A1｜第 12 段｜note｜accept
+### A1｜第 12 段
 
 > 原文：「血泼了他一脸」
 
