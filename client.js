@@ -639,7 +639,12 @@ window.__ModuleLoader__.load({
       const [state, setState] = useState({ status: 'loading' })
       const [attempt, setAttempt] = useState(0)
       const info = typeof props.useTabInfo === 'function' ? props.useTabInfo() : null
-      const address = info && info.tab ? info.tab.contentId || '' : ''
+      const address =
+        (info && info.tab && info.tab.contentId) ||
+        (props.tab && props.tab.contentId) ||
+        props.resourceAddress ||
+        props.contentId ||
+        ''
 
       useEffect(() => {
         if (!address) return undefined
