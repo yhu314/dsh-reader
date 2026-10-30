@@ -137,6 +137,7 @@ function stringArray(value, fallback) {
  *   errors: string[],
  *   annotation: { types: string[], conclusions: string[], locale: "zh"|"en" },
  *   claimMarkdown: "all"|"libraries"|"off",
+ *   sessions: string[],
  *   pathBase: string|null,
  *   promptTemplate: string,
  *   maxChapterBytes: number,
@@ -173,6 +174,17 @@ function normalizeConfig(config) {
     }
   }
 
+  let sessions = [];
+  if (source.sessions !== undefined && source.sessions !== null) {
+    if (!Array.isArray(source.sessions)) {
+      errors.push("config.sessions must be an array of session ids; using all sessions");
+    } else {
+      sessions = source.sessions
+        .filter((entry) => typeof entry === "string" && entry.trim() !== "")
+        .map((entry) => entry.trim());
+    }
+  }
+
   const pathBase =
     typeof source.pathBase === "string" && source.pathBase.trim() !== ""
       ? resolve(process.cwd(), source.pathBase)
@@ -203,6 +215,7 @@ function normalizeConfig(config) {
     libraries,
     errors,
     annotation,
+    sessions,
     claimMarkdown,
     pathBase,
     promptTemplate:
@@ -1143,6 +1156,7 @@ async function handleConfig(settings) {
   return {
     version: await readOwnVersion(),
     claimMarkdown: settings.claimMarkdown,
+    sessions: [...settings.sessions],
     pathBase: settings.pathBase,
     annotation: {
       types: [...settings.annotation.types],

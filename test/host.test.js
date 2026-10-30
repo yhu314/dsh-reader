@@ -291,6 +291,21 @@ test("GET /config exposes neutral defaults, claimMarkdown and no chapter data", 
 
 // ── books ──────────────────────────────────────────────────────────────────
 
+test("GET /config exposes the neutral vocabulary and an empty session allowlist", async () => {
+  const defaults = createClient({ libraries: [] });
+  const res = await request(defaults, "/api/dsh_reader/config");
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.json.sessions, []);
+  assert.equal(res.json.claimMarkdown, "all");
+  assert.deepEqual(res.json.annotation.types, ["note", "question", "fix", "idea"]);
+  assert.deepEqual(res.json.annotation.conclusions, ["accept", "reject", "defer"]);
+  assert.equal(res.json.errors.length, 0);
+
+  const scoped = createClient({ ...baseConfig(), sessions: ["session-a", " session-b "] });
+  const scopedRes = await request(scoped, "/api/dsh_reader/config");
+  assert.deepEqual(scopedRes.json.sessions, ["session-a", "session-b"]);
+});
+
 test("GET /books sorts naturally, extracts titles and skips noise", async () => {
   const res = await request(client, "/api/dsh_reader/books");
   assert.equal(res.status, 200);

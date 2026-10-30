@@ -87,6 +87,7 @@ A book is a directory of markdown files. Add to your profile's `cordis.patch.yml
       conclusions: [accept, reject, defer]
       locale: zh            # zh | en — headings of generated markdown
     claimMarkdown: all      # all | libraries | off
+    sessions: []            # session ids allowed to claim markdown; [] = every session
     pathBase: '/Users/you/Novel'   # workspace root; makes prompt paths relative
     promptTemplate: 'Revise {chapterFile} according to the annotations in {annotationFile}.'
 ```
@@ -102,6 +103,7 @@ A book is a directory of markdown files. Add to your profile's `cordis.patch.yml
 | `annotation.types` / `conclusions` | annotation vocabulary offered in the form |
 | `annotation.locale` | `zh` (default) or `en` for generated markdown |
 | `claimMarkdown` | which `.md` files open in the reader: `all` (default), `libraries`, `off` |
+| `sessions` | session ids that may claim markdown; `[]` (default) = every session |
 | `pathBase` | workspace root: resolves workspace-relative addresses, shortens prompt paths |
 | `promptTemplate` | copied by **Send to chat**; `{annotationFile}`, `{chapterFile}` |
 | `maxChapterBytes` | refuse larger chapter files; default 2 MiB |
@@ -110,6 +112,25 @@ Files outside every library still open in the reader (`claimMarkdown: all`) but 
 the folder is treated as an ad-hoc book and no annotations are written.
 
 Missing or invalid rows are listed in the bookshelf's empty state instead of crashing the plugin.
+
+## Session-scoped rollout
+
+Plugins are installed per profile, but the reader can be **limited to selected sessions** so the
+rest of the app keeps its built-in markdown preview while you try it out:
+
+```yaml
+- id: dsh_reader
+  config:
+    sessions: ['session-b5738371-9751-46cf-a281-4c4f9dd87609']
+    claimMarkdown: libraries     # start narrow, widen later
+```
+
+- The session id rides on every file address (`dsh-resource://file/session/<id>/…`), so a session
+  outside the list always opens markdown in the built-in preview.
+- A staged ramp works well: `claimMarkdown: off` (nothing intercepted; open the reader from the
+  left Sidebar) → `libraries` (only configured books) → `all` for that session.
+- The reader also refuses to claim anything until `/config` has answered, and a crash inside the
+  reader is caught by an error boundary instead of blanking the Sidebar.
 
 ## Annotation files
 

@@ -54,6 +54,9 @@ window.__ModuleLoader__.load({
       chapterCount: '章',
       totalChapters: '共 {n} 章',
       unsupported: '这个标签页没有可读的地址',
+      notThisSession: '阅读器未在这个会话启用',
+      notThisSessionBody:
+        '插件里配置了 sessions 白名单，当前会话不在名单内。刷新页面即可恢复内置预览；要在这里启用，把会话 id 加进 sessions。',
     }
     const en = {
       title: 'Reader',
@@ -98,6 +101,9 @@ window.__ModuleLoader__.load({
       chapterCount: 'chapters',
       totalChapters: '{n} chapters',
       unsupported: 'This tab has no readable address',
+      notThisSession: 'Reader is not enabled in this session',
+      notThisSessionBody:
+        'The plugin has a `sessions` allowlist and this session is not on it. Reload the page to get the built-in preview back; add this session id to `sessions` to use the reader here.',
     }
     const DICTS = { zh, en }
     function tr(t, key) {
@@ -118,7 +124,7 @@ window.__ModuleLoader__.load({
     // ── styles ────────────────────────────────────────────────────────────
     const CSS_TAG = 'dsh_reader/reader.css'
     const css = `
-.dsr-root{position:relative;height:100%;min-height:0;display:flex;flex-direction:column;color:var(--dsw-alias-label-primary,#e8e9ee);font-size:13px;line-height:1.5;overflow:hidden}
+.dsr-root{position:relative;height:100%;min-height:240px;display:flex;flex-direction:column;color:var(--dsw-alias-label-primary,#e8e9ee);font-size:13px;line-height:1.5;overflow:hidden}
 .dsr-bar{flex:none;display:flex;align-items:center;gap:2px;height:34px;padding:0 4px 0 6px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08))}
 .dsr-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#a9adba);padding:0 4px}
 .dsr-btn{cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:4px;height:26px;min-width:26px;padding:0 6px;border:1px solid transparent;border-radius:7px;background:0 0;color:var(--dsw-alias-label-secondary,#a9adba);font:inherit;font-size:12px;line-height:1;white-space:nowrap}
@@ -286,29 +292,51 @@ window.__ModuleLoader__.load({
       if (!parsed) return DICTS.zh.reader
       return basenameOf(parsed.path).replace(/\.(md|markdown)$/i, '')
     }
-    function resolveClientPath(relativePath) {
+    function resolveClientPathFor(config, relativePath) {
       if (!relativePath) return relativePath
       if (relativePath.startsWith('/')) return relativePath
-      if (configValue && configValue.pathBase) {
-        return String(configValue.pathBase).replace(/\/+$/, '') + '/' + relativePath
+      if (config && config.pathBase) {
+        return String(config.pathBase).replace(/\/+$/, '') + '/' + relativePath
       }
       return relativePath
+    }
+    function resolveClientPath(relativePath) {
+      return resolveClientPathFor(configValue, relativePath)
     }
     function insideRoot(path, root) {
       if (!path || !root) return false
       const normalized = String(root).replace(/\/+$/, '')
       return path === normalized || path.startsWith(normalized + '/')
     }
-    function claimAddress(address) {
-      const parsed = parseFileAddress(address)
-      if (!parsed) return false
-      const path = resolveClientPath(parsed.path)
-      if (configValue === null) return true // default claimMarkdown: all
-      if (configValue.claimMarkdown === 'off') return false
-      if (configValue.claimMarkdown === 'libraries') {
-        return (configValue.libraries || []).some((library) => insideRoot(path, library.root))
+    /**
+     * Decide whether the reader takes a markdown resource away from the built-in
+     * preview. Errs on the safe side everywhere: an unknown config, an unknown
+     * address, or an error means "do not claim".
+     */
+    function claimWith(config, address) {
+      try {
+        const parsed = parseFileAddress(address)
+        if (!parsed) return false
+        const path = resolveClientPathFor(config, parsed.path)
+        if (!path) return false
+        // Until the host answers /config, keep the built-in preview in charge.
+        if (!config) return false
+        if (config.claimMarkdown === 'off') return false
+        const only = Array.isArray(config.sessions) ? config.sessions : []
+        if (only.length > 0) {
+          // Session-scoped rollout: every other session keeps the built-in preview.
+          if (!parsed.sessionId || !only.includes(parsed.sessionId)) return false
+        }
+        if (config.claimMarkdown === 'libraries') {
+          return (config.libraries || []).some((library) => insideRoot(path, library.root))
+        }
+        return true
+      } catch {
+        return false
       }
-      return true
+    }
+    function claimAddress(address) {
+      return claimWith(configValue, address)
     }
 
     // ── markdown: blocks + inline renderer (dependency-free, prose-first) ──
@@ -540,7 +568,15 @@ window.__ModuleLoader__.load({
         /* no on-screen session: the Sidebar cannot open */
       }
     }
-    function OpenButton({ t, wide }) {
+    function OpenButton({ t, wide, useSessions }) {
+      let currentSession = null
+      try {
+        currentSession = typeof useSessions === 'function' ? useSessions((state) => state.current) : null
+      } catch {
+        currentSession = null
+      }
+      const onlySessions = configValue && Array.isArray(configValue.sessions) ? configValue.sessions : []
+      if (onlySessions.length > 0 && currentSession && !onlySessions.includes(currentSession)) return null
       const label = tr(t, 'openReader')
       return h('button', {
         type: 'button',
@@ -645,9 +681,12 @@ window.__ModuleLoader__.load({
         props.resourceAddress ||
         props.contentId ||
         ''
+      const onlySessions = configValue && Array.isArray(configValue.sessions) ? configValue.sessions : []
+      const sessionAllowed =
+        onlySessions.length === 0 || !props.sessionId || onlySessions.includes(props.sessionId)
 
       useEffect(() => {
-        if (!address) return undefined
+        if (!address || !sessionAllowed) return undefined
         let cancelled = false
         ;(async () => {
           setState({ status: 'loading' })
@@ -676,9 +715,15 @@ window.__ModuleLoader__.load({
         return () => {
           cancelled = true
         }
-      }, [address, attempt])
+      }, [address, attempt, sessionAllowed])
 
       if (!address) return h(BookshelfBody, props)
+      if (!sessionAllowed) {
+        return h('div', { className: 'dsr-root' },
+          h('div', { className: 'dsr-setup' },
+            h('h2', null, tr(t, 'notThisSession')),
+            h('p', null, tr(t, 'notThisSessionBody'))))
+      }
       if (state.status === 'loading') return h('div', { className: 'dsr-root' }, h('div', { className: 'dsr-empty' }, tr(t, 'loading')))
       if (state.status === 'error') {
         return h('div', { className: 'dsr-root' },
@@ -1249,6 +1294,41 @@ window.__ModuleLoader__.load({
           }, tr(t, 'save'))))
     }
 
+    // ── error boundary: a failing reader must never blank the Sidebar ─────
+    class ReaderErrorBoundary extends React.Component {
+      constructor(props) {
+        super(props)
+        this.state = { failed: false, error: null }
+      }
+      static getDerivedStateFromError(error) {
+        return { failed: true, error }
+      }
+      componentDidCatch(error, info) {
+        try {
+          console.warn('[dsh_reader] reader crashed', error, info)
+        } catch {
+          /* ignore */
+        }
+      }
+      render() {
+        if (this.state.failed) {
+          const message = String((this.state.error && this.state.error.message) || this.state.error || '')
+          return h('div', { className: 'dsr-root' },
+            h('div', { className: 'dsr-setup' },
+              h('h2', null, 'dsh_reader 渲染失败'),
+              h('p', null, message),
+              h('p', null, '刷新页面即可恢复内置预览；把上面的内容发给我可以定位问题。')))
+        }
+        return this.props.children
+      }
+    }
+    function ReaderTabBody(props) {
+      return h(ReaderErrorBoundary, null, h(FileTabBody, props))
+    }
+    function ShelfTabBody(props) {
+      return h(ReaderErrorBoundary, null, h(BookshelfBody, props))
+    }
+
     // ── plugin body ───────────────────────────────────────────────────────
     const READER_ID = 'dsh_reader/reader'
     const BOOKS_ID = 'dsh_reader/books'
@@ -1281,7 +1361,15 @@ window.__ModuleLoader__.load({
         'dsh_reader: markdown tab type',
       )
       ctx.slots.inject('sidebar.right.pane.tab', () =>
-        ctx.slots.register({ name: 'sidebar.right.pane.tab', key: READER_ID, locale: NS }, FileTabBody))
+        ctx.slots.register(
+          {
+            name: 'sidebar.right.pane.tab',
+            key: READER_ID,
+            locale: NS,
+            inject: (sessionId) => ({ sessionId }),
+          },
+          ReaderTabBody,
+        ))
 
       // Bookshelf page: opened from the left Sidebar; lists libraries and
       // chapters and opens them in place.
@@ -1295,7 +1383,15 @@ window.__ModuleLoader__.load({
         'dsh_reader: bookshelf tab type',
       )
       ctx.slots.inject('sidebar.right.pane.tab', () =>
-        ctx.slots.register({ name: 'sidebar.right.pane.tab', key: BOOKS_ID, locale: NS }, BookshelfBody))
+        ctx.slots.register(
+          {
+            name: 'sidebar.right.pane.tab',
+            key: BOOKS_ID,
+            locale: NS,
+            inject: (sessionId) => ({ sessionId }),
+          },
+          ShelfTabBody,
+        ))
 
       ctx.effect(
         () =>
@@ -1318,6 +1414,7 @@ window.__ModuleLoader__.load({
       stripFrontmatter,
       parseFileAddress,
       claimAddress,
+      claimWith,
     }
     return module.exports
   },

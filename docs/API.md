@@ -21,11 +21,17 @@ annotation:
   conclusions: [accept, reject, defer]         # neutral defaults
   locale: zh                     # zh | en, headings of the generated markdown
 claimMarkdown: all               # all | libraries | off
+sessions: []                     # session ids allowed to claim markdown; [] = every session
 pathBase: /abs/path/project      # workspace root: resolves workspace-relative addresses,
                                  # and shortens paths in prompts
 promptTemplate: "Revise {chapterFile} according to {annotationFile}."
 maxChapterBytes: 2097152
 ```
+
+`sessions` is the session-scoped rollout switch: when it lists session ids, only markdown opened
+from those sessions is claimed by the reader; every other session keeps the built-in preview.
+The address carries the authorizing session id, so this is enforced per open, and the left-Sidebar
+entry hides itself where the current session is known to be outside the list.
 
 `claimMarkdown` decides which `.md` resources the reader claims in the Sidebar:
 `all` opens every markdown file in the reader (the default; files outside a library open
@@ -52,6 +58,7 @@ The browser needs this before it can decide which addresses to claim and how to 
 {
   "version": "0.1.0",
   "claimMarkdown": "all",
+  "sessions": ["session-b5738371-9751-46cf-a281-4c4f9dd87609"],
   "pathBase": "/abs/path/project",
   "annotation": { "types": ["note"], "conclusions": ["accept"], "locale": "zh" },
   "promptTemplate": "...",
