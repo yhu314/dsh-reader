@@ -1,6 +1,6 @@
 # Example: a documentation folder read as one continuous book, English export.
-- id: dsh-reader
-  name: dsh-reader
+- id: dsh_reader
+  name: dsh_reader
   config:
     libraries:
       - id: handbook
@@ -13,5 +13,6 @@
       types: [note, question, fix, idea]
       conclusions: [accept, reject, defer]
       locale: en
+    claimMarkdown: all
     pathBase: '/absolute/path/to/handbook'
     promptTemplate: 'Revise {chapterFile} according to the annotations in {annotationFile}. Handle every item and report the outcome for each.'

@@ -1,23 +1,22 @@
-# dsh-reader bundle patch (applied automatically when the bundle is installed).
+# dsh_reader bundle patch (applied automatically when the bundle is installed).
 #
 # Configure books in your own profile `cordis.patch.yml` — a matching override
 # replaces this whole `config` block, so copy it there and edit:
 #
-#   - id: dsh-reader
-#     name: dsh-reader
+#   - id: dsh_reader
+#     name: dsh_reader
 #     config:
 #       libraries:
 #         - id: zhaoyun
 #           title: 赵云传
 #           root: '/Users/you/Novels/赵云传/04_正文'
 #           annotationDir: '/Users/you/Novels/赵云传/06_批注'
+#       pathBase: '/Users/you/Novels'
 #       annotation:
-#         types: [事实, 逻辑, 文风, 结构, 删减, 疑问]
-#         conclusions: [采纳, 驳回, 转细纲, 暂缓]
 #         locale: zh
 #
 - insert:
-    - id: dsh-reader
-      name: dsh-reader
+    - id: dsh_reader
+      name: dsh_reader
       config:
         libraries: []

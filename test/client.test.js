@@ -35,15 +35,15 @@ await import(clientPath)
 
 test('client module registers with the module loader', () => {
   assert.ok(captured, 'window.__ModuleLoader__.load was not called')
-  assert.equal(captured.id, 'dsh-reader')
+  assert.equal(captured.id, 'dsh_reader')
   const module = captured.factory(requireStub)
-  assert.equal(module.name, 'dsh-reader')
-  assert.deepEqual(module.inject, ['slots', 'locale'])
+  assert.equal(module.name, 'dsh_reader')
+  assert.deepEqual(module.inject, ['slots', 'locale', 'sidebarRight', 'sidebarRightTabs'])
   assert.equal(typeof module.apply, 'function')
   assert.ok(module.__test)
 })
 
-const { splitBlocks, computeSegments, buildPrompt, inlineNodes } = captured.factory(requireStub).__test
+const { splitBlocks, computeSegments, buildPrompt, inlineNodes, parseFileAddress } = captured.factory(requireStub).__test
 
 test('splitBlocks: frontmatter, headings, paragraphs, scene break', () => {
   const blocks = splitBlocks(
@@ -114,7 +114,7 @@ test('buildPrompt: substitutes file placeholders', () => {
     '第001章.md',
   )
   assert.equal(prompt, '请按 赵云传/06_批注/第001章.md 中的批注修改 第001章.md。')
-  assert.equal(buildPrompt('', 'a.md', 'b.md'), '请按 a.md 中的批注修改 b.md。')
+  assert.equal(buildPrompt('', 'a.md', 'b.md'), 'Revise b.md according to a.md.')
 })
 
 test('inlineNodes: emphasis, code and links become elements', () => {
@@ -128,4 +128,22 @@ test('inlineNodes: emphasis, code and links become elements', () => {
 test('inlineNodes: plain text stays a single string node', () => {
   const nodes = inlineNodes('没有格式的一句话', 't')
   assert.deepEqual(nodes, ['没有格式的一句话'])
+})
+
+test('parseFileAddress: session address keeps leading slashes', () => {
+  const parsed = parseFileAddress('dsh-resource://file/session/s//etc/hosts')
+  assert.deepEqual(parsed, { sessionId: 's', path: '/etc/hosts' })
+})
+
+test('parseFileAddress: decodes workspace-relative segments and ignores query', () => {
+  const address = 'dsh-resource://file/session/abc/' + encodeURIComponent('赵云传/04_正文/第026章.md') + '?line=3'
+  const parsed = parseFileAddress(address)
+  assert.equal(parsed.sessionId, 'abc')
+  assert.equal(parsed.path, '赵云传/04_正文/第026章.md')
+})
+
+test('parseFileAddress: absolute (session-less) form and garbage', () => {
+  assert.deepEqual(parseFileAddress('dsh-resource://file/absolute/%2Ftmp%2Fa.md'), { sessionId: '', path: '/tmp/a.md' })
+  assert.equal(parseFileAddress('dsh-resource://changes/x'), null)
+  assert.equal(parseFileAddress('nope'), null)
 })

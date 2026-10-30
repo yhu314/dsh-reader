@@ -1,19 +1,22 @@
-// dsh-reader — host half.
+// dsh_reader — host half.
 //
 // Serves a markdown book reader and its annotation store behind one prefix
 // route on the DSH Web GUI:
 //
-//   GET  /api/dsh-reader/health       -> { ok, version, libraries }
-//   GET  /api/dsh-reader/books        -> { libraries, annotation, promptTemplate, errors }
-//   GET  /api/dsh-reader/chapter      -> { id, title, text }
-//   GET  /api/dsh-reader/annotations  -> { comments, annotationFile, annotationPath }
-//   POST /api/dsh-reader/annotations  -> same shape, after save/delete/resolve
+//   GET  /api/dsh_reader/health       -> { ok, version, libraries }
+//   GET  /api/dsh_reader/config       -> { version, claimMarkdown, pathBase, annotation, ... }
+//   GET  /api/dsh_reader/books        -> { libraries, annotation, promptTemplate, errors }
+//   GET  /api/dsh_reader/resolve      -> { mode, path, bookRoot, chapters, index, ... }
+//   GET  /api/dsh_reader/chapter      -> { id, title, text }
+//   GET  /api/dsh_reader/annotations  -> { comments, annotationFile, annotationPath }
+//   POST /api/dsh_reader/annotations  -> same shape, after save/delete/resolve
 //
 // Loopback only: the route reads local files from configured library roots.
-// Every path coming from the browser is resolved and checked against its
-// library root; escapes are rejected with 403.
+// Every library path coming from the browser is resolved and checked against
+// its root; escapes are rejected with 403. Ad-hoc reads accept one explicit
+// absolute markdown file (exactly what the Sidebar handed us).
 //
-// Annotations live in `<annotationDir>/.dsh-reader.json` (source of truth) and
+// Annotations live in `<annotationDir>/.dsh_reader.json` (source of truth) and
 // are mirrored to `<annotationDir>/<chapter stem>.md` for humans and agents.
 // Both files are written atomically (tmp file + rename).
 
@@ -33,18 +36,22 @@ import { fileURLToPath } from "node:url";
 
 // ── constants ──────────────────────────────────────────────────────────────
 
-const ROUTE_PREFIX = "/api/dsh-reader";
-const STORE_FILE = ".dsh-reader.json";
+const ROUTE_PREFIX = "/api/dsh_reader";
+const STORE_FILE = ".dsh_reader.json";
 const HEAD_BYTES = 8 * 1024;
 const MAX_BODY_BYTES = 1024 * 1024;
 const DEFAULT_MAX_CHAPTER_BYTES = 2 * 1024 * 1024;
 const FALLBACK_VERSION = "0.1.0";
-const DEFAULT_PROMPT_TEMPLATE = "请按 {annotationFile} 中的批注修改 {chapterFile}。";
-const DEFAULT_TYPES = ["事实", "逻辑", "文风", "结构", "删减", "疑问"];
-const DEFAULT_CONCLUSIONS = ["采纳", "驳回", "转细纲", "暂缓"];
+const DEFAULT_PROMPT_TEMPLATE_ZH = "请按 {annotationFile} 中的批注修改 {chapterFile}。";
+const DEFAULT_PROMPT_TEMPLATE_EN = "Revise {chapterFile} according to {annotationFile}.";
+const DEFAULT_TYPES = ["note", "question", "fix", "idea"];
+const DEFAULT_CONCLUSIONS = ["accept", "reject", "defer"];
+const CLAIM_MARKDOWN_MODES = new Set(["all", "libraries", "off"]);
+const CHAPTER_ORDERS = new Set(["auto", "filename", "mtime"]);
 const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/;
 const MARKDOWN_FILE = /\.(?:md|markdown)$/i;
 const H1_HEADING = /^#\s+(.+?)\s*$/m;
+const FRONTMATTER_KEY = /^([A-Za-z0-9_-]+)\s*:\s*(.*)$/;
 const PACKAGE_JSON = join(dirname(fileURLToPath(import.meta.url)), "package.json");
 
 // Natural, numeric-aware order for chapter file names ("第2章" before "第10章").
@@ -121,14 +128,15 @@ function stringArray(value, fallback) {
  * Turn the raw Cordis `config` object into the internal settings shape.
  *
  * This is deliberately defensive: a missing root, a duplicate id or a broken
- * RegExp is collected in `errors` (surfaced by `/books`) instead of throwing,
- * so a bad profile entry can never stop the plugin from loading.
+ * RegExp is collected in `errors` (surfaced by `/config` and `/books`) instead
+ * of throwing, so a bad profile entry can never stop the plugin from loading.
  *
  * @param {unknown} config raw plugin config from `cordis.patch.yml`
  * @returns {{
  *   libraries: Array<object>,
  *   errors: string[],
  *   annotation: { types: string[], conclusions: string[], locale: "zh"|"en" },
+ *   claimMarkdown: "all"|"libraries"|"off",
  *   pathBase: string|null,
  *   promptTemplate: string,
  *   maxChapterBytes: number,
@@ -151,6 +159,19 @@ function normalizeConfig(config) {
         ? "en"
         : "zh",
   };
+
+  let claimMarkdown = "all";
+  if (source.claimMarkdown !== undefined && source.claimMarkdown !== null) {
+    const value =
+      typeof source.claimMarkdown === "string" ? source.claimMarkdown.trim().toLowerCase() : "";
+    if (CLAIM_MARKDOWN_MODES.has(value)) {
+      claimMarkdown = value;
+    } else {
+      errors.push(
+        `claimMarkdown must be one of ${[...CLAIM_MARKDOWN_MODES].join(", ")}; using "all"`,
+      );
+    }
+  }
 
   const pathBase =
     typeof source.pathBase === "string" && source.pathBase.trim() !== ""
@@ -175,16 +196,19 @@ function normalizeConfig(config) {
     }
   });
 
+  const defaultPrompt =
+    annotation.locale === "en" ? DEFAULT_PROMPT_TEMPLATE_EN : DEFAULT_PROMPT_TEMPLATE_ZH;
   const maxChapterBytes = Number(source.maxChapterBytes);
   return {
     libraries,
     errors,
     annotation,
+    claimMarkdown,
     pathBase,
     promptTemplate:
       typeof source.promptTemplate === "string" && source.promptTemplate.trim() !== ""
         ? source.promptTemplate
-        : DEFAULT_PROMPT_TEMPLATE,
+        : defaultPrompt,
     maxChapterBytes:
       Number.isFinite(maxChapterBytes) && maxChapterBytes > 0
         ? Math.floor(maxChapterBytes)
@@ -225,6 +249,16 @@ function normalizeLibrary(entry, index, pathBase, errors, seenIds) {
   const exclude = compilePatterns(entry.exclude, "exclude", id, errors);
   if (include === null || exclude === null) return null;
 
+  let order = "auto";
+  if (entry.order !== undefined && entry.order !== null) {
+    const value = typeof entry.order === "string" ? entry.order.trim().toLowerCase() : "";
+    if (CHAPTER_ORDERS.has(value)) {
+      order = value;
+    } else {
+      errors.push(`library "${id}": order must be one of auto, filename, mtime; using "auto"`);
+    }
+  }
+
   const root = resolve(process.cwd(), rootValue);
   const annotationDir =
     typeof entry.annotationDir === "string" && entry.annotationDir.trim() !== ""
@@ -243,6 +277,7 @@ function normalizeLibrary(entry, index, pathBase, errors, seenIds) {
     recursive: entry.recursive === true,
     include,
     exclude,
+    order,
     pathBase,
   };
 }
@@ -320,6 +355,86 @@ function titleFromText(text, fallback) {
   return fallback;
 }
 
+/** Strip one pair of matching YAML quotes from a scalar value. */
+function unquoteFrontmatterValue(value) {
+  if (value.length >= 2) {
+    const first = value[0];
+    const last = value[value.length - 1];
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+      return value.slice(1, -1).trim();
+    }
+  }
+  return value;
+}
+
+/**
+ * Parse a leading `---` … `---` frontmatter block.
+ *
+ * Only the two fields this plugin understands are exposed: `title` (string)
+ * and `order` (finite number). The block is treated as frontmatter only when a
+ * closing fence exists *and* it looks like YAML keys, matching the browser
+ * half's `stripFrontmatter`; a leading `---` scene break therefore stays part
+ * of the chapter text.
+ *
+ * @param {string} text the 8 KiB head (or a whole chapter)
+ * @returns {{ title: string|null, order: number|null, body: string }}
+ */
+function parseFrontmatter(text) {
+  const source = typeof text === "string" ? text : "";
+  const none = { title: null, order: null, body: source };
+  const lines = source.split("\n");
+  if (lines.length < 2 || lines[0].trim() !== "---") return none;
+
+  let end = -1;
+  for (let index = 1; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (line === "---" || line === "...") {
+      end = index;
+      break;
+    }
+  }
+  if (end === -1) return none;
+
+  const block = lines.slice(1, end);
+  if (!block.some((line) => FRONTMATTER_KEY.test(line.trim()))) return none;
+
+  let title = null;
+  let order = null;
+  for (const line of block) {
+    const match = FRONTMATTER_KEY.exec(line.trim());
+    if (match === null) continue;
+    const key = match[1].toLowerCase();
+    const raw = match[2].trim();
+    if (raw === "") continue;
+    if (key === "title") {
+      const value = unquoteFrontmatterValue(raw);
+      if (value !== "") title = value;
+    } else if (key === "order") {
+      const value = Number(unquoteFrontmatterValue(raw));
+      if (Number.isFinite(value)) order = value;
+    }
+  }
+
+  return { title, order, body: lines.slice(end + 1).join("\n") };
+}
+
+/**
+ * Resolve chapter title and order from file text.
+ *
+ * Title precedence: frontmatter `title` > first `# ` heading > file stem.
+ *
+ * @param {string} text the head (or whole chapter)
+ * @param {string} fallback file stem
+ * @returns {{ title: string, order: number|null }}
+ */
+function chapterMeta(text, fallback) {
+  const meta = parseFrontmatter(text);
+  return {
+    title: meta.title !== null ? meta.title : titleFromText(meta.body, fallback),
+    order: meta.order,
+  };
+}
+
 /** A chapter's annotation markdown file name (`<stem>.md`). */
 function annotationFileFor(chapter) {
   return `${chapterStem(chapter.name)}.md`;
@@ -336,6 +451,18 @@ function annotationPathFor(library, annotationFile) {
   if (library.pathBase === null) return join(library.annotationDir, annotationFile);
   const rel = toPosixPath(relative(library.pathBase, library.annotationDir));
   return rel === "" ? annotationFile : `${rel}/${annotationFile}`;
+}
+
+/**
+ * Path spelling for the chapter itself, used by `{chapterFile}` in prompts.
+ *
+ * Follows `pathBase` exactly like `annotationPathFor`, so the copied prompt
+ * carries project-relative paths that read well in the chat.
+ */
+function chapterPathFor(library, chapterId) {
+  const absolute = join(library.root, chapterId.split("/").join(sep));
+  if (library.pathBase === null) return absolute;
+  return toPosixPath(relative(library.pathBase, absolute));
 }
 
 /** True when the annotation directory is a proper subtree of the library. */
@@ -362,8 +489,8 @@ async function escapesViaSymlink(root, absPath) {
  *
  * Skips dotfiles, non-markdown files, and the annotation directory subtree;
  * descends into subdirectories only when `recursive` is enabled; applies
- * `include` / `exclude` to the library-relative POSIX path; finally sorts by
- * file name with the natural collator.
+ * `include` / `exclude` to the library-relative POSIX path. Sorting happens
+ * later, once each chapter's frontmatter order is known.
  */
 async function collectChapterFiles(library) {
   const found = [];
@@ -398,13 +525,10 @@ async function collectChapterFiles(library) {
     }
   }
 
-  found.sort(
-    (a, b) => chapterCollator.compare(a.name, b.name) || chapterCollator.compare(a.id, b.id),
-  );
   return found;
 }
 
-/** Build the JSON entry for one chapter file. */
+/** Build the JSON entry for one chapter file (plus internal sort fields). */
 async function describeChapter(library, file) {
   let info;
   try {
@@ -417,20 +541,59 @@ async function describeChapter(library, file) {
 
   const stem = chapterStem(file.name);
   const head = await readHead(file.absPath, info.size).catch(() => "");
-  const title = titleFromText(head, stem);
+  const meta = chapterMeta(head, stem);
   const annotationFile = `${stem}.md`;
   return {
     id: file.id,
-    title,
+    title: meta.title,
+    order: meta.order,
     size: info.size,
     mtime: Number.isFinite(info.mtimeMs) ? Math.trunc(info.mtimeMs) : 0,
     annotationFile,
     annotationPath: annotationPathFor(library, annotationFile),
+    chapterPath: chapterPathFor(library, file.id),
+    // Internal fields, stripped before the entry reaches the browser.
+    name: file.name,
   };
 }
 
-/** `/books`: one library with its chapters, or a per-library error message. */
-async function describeLibrary(library) {
+/** Natural file-name order (`第2章` before `第10章`). */
+function naturalCompare(a, b) {
+  return (
+    chapterCollator.compare(a.name, b.name) || chapterCollator.compare(a.id, b.id)
+  );
+}
+
+/**
+ * Comparator for one library's `order` mode.
+ *
+ * `auto` puts finite frontmatter orders first (ascending), then ties and
+ * order-less files follow natural file-name order. `filename` ignores
+ * frontmatter entirely; `mtime` sorts by modification time, ties by name.
+ */
+function chapterComparator(order) {
+  if (order === "filename") return naturalCompare;
+  if (order === "mtime") {
+    return (a, b) => a.mtime - b.mtime || naturalCompare(a, b);
+  }
+  return (a, b) => {
+    if (a.order !== null && b.order !== null) {
+      return a.order - b.order || naturalCompare(a, b);
+    }
+    if (a.order !== null) return -1;
+    if (b.order !== null) return 1;
+    return naturalCompare(a, b);
+  };
+}
+
+/**
+ * List one library's chapters, sorted according to its `order` config.
+ *
+ * The returned objects are exactly the `/books` chapter shape (`order` is the
+ * frontmatter order or `null`), so `/resolve` can hand them to the browser
+ * unchanged.
+ */
+async function listChapters(library) {
   let rootInfo;
   try {
     rootInfo = await stat(library.root);
@@ -453,12 +616,19 @@ async function describeLibrary(library) {
   }
 
   const described = await Promise.all(files.map((file) => describeChapter(library, file)));
+  const chapters = described.filter((chapter) => chapter !== null);
+  chapters.sort(chapterComparator(library.order));
+  return chapters.map(({ name, ...chapter }) => chapter);
+}
+
+/** `/books`: one library with its chapters, or a per-library error message. */
+async function describeLibrary(library) {
   return {
     id: library.id,
     title: library.title,
     root: library.root,
     annotationDir: library.annotationDir,
-    chapters: described.filter((chapter) => chapter !== null),
+    chapters: await listChapters(library),
   };
 }
 
@@ -523,6 +693,176 @@ function findLibrary(settings, id) {
   return library;
 }
 
+// ── ad-hoc file resolution ─────────────────────────────────────────────────
+
+/** True when any path segment names a dotfile / hidden directory. */
+function hasHiddenSegment(value) {
+  return value
+    .split(/[\\/]+/)
+    .some(
+      (segment) =>
+        segment !== "" &&
+        segment !== "." &&
+        segment !== ".." &&
+        segment.startsWith("."),
+    );
+}
+
+/** `stat` that returns `null` instead of throwing. */
+async function statOrNull(absPath) {
+  try {
+    return await stat(absPath);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve a browser-supplied ad-hoc path to one readable markdown file.
+ *
+ * Order: absolute → as-is; otherwise `pathBase` + path; when that does not
+ * exist and the path is relative, each library root with the path, then with
+ * the bare basename. The final file must be a non-hidden, regular
+ * `.md`/`.markdown` file.
+ *
+ * @param {object} settings normalized settings
+ * @param {string} rawPath decoded `path` query value
+ * @param {{requireAbsolute?: boolean}} [options]
+ * @returns {Promise<{absPath: string, info: import("node:fs").Stats}>}
+ */
+async function resolveAdhocFile(settings, rawPath, options = {}) {
+  if (typeof rawPath !== "string" || rawPath === "") {
+    throw new HttpError(400, "missing path parameter");
+  }
+  if (rawPath.includes("\0")) throw new HttpError(400, "invalid path parameter");
+
+  const absolute = isAbsoluteAnywhere(rawPath);
+  if (options.requireAbsolute === true && !absolute) {
+    throw new HttpError(400, "path must be absolute");
+  }
+
+  let candidate = null;
+  if (absolute) {
+    candidate = resolve(rawPath);
+  } else if (settings.pathBase !== null) {
+    candidate = resolve(settings.pathBase, rawPath);
+  }
+
+  if (candidate === null || (await statOrNull(candidate)) === null) {
+    candidate = null;
+    if (!absolute) {
+      for (const library of settings.libraries) {
+        for (const attempt of [
+          resolve(library.root, rawPath),
+          resolve(library.root, basename(rawPath)),
+        ]) {
+          if ((await statOrNull(attempt)) !== null) {
+            candidate = attempt;
+            break;
+          }
+        }
+        if (candidate !== null) break;
+      }
+    }
+  }
+
+  if (candidate === null) throw new HttpError(404, "unknown-file");
+  // Only the requested path is checked for hidden segments; an absolute
+  // address may legitimately live under a dot-directory chosen by the user.
+  if (basename(candidate).startsWith(".")) throw new HttpError(404, "unknown-file");
+  if (!absolute && hasHiddenSegment(rawPath)) throw new HttpError(404, "unknown-file");
+  if (!MARKDOWN_FILE.test(candidate)) throw new HttpError(404, "unknown-file");
+
+  const info = await statOrNull(candidate);
+  if (info === null || !info.isFile()) throw new HttpError(404, "unknown-file");
+  return { absPath: candidate, info };
+}
+
+/**
+ * Build the ad-hoc chapter list for one file's directory.
+ *
+ * Only direct `.md`/`.markdown` regular files are considered, dotfiles are
+ * skipped, and a sibling `<stem>.md` that is this file's annotation export is
+ * not offered as a chapter. Entries are sorted naturally by file name.
+ */
+async function listAdhocChapters(absPath) {
+  const bookRoot = dirname(absPath);
+  const ownExport = `${chapterStem(basename(absPath))}.md`;
+
+  let entries;
+  try {
+    entries = await readdir(bookRoot, { withFileTypes: true });
+  } catch (error) {
+    throw new HttpError(404, `cannot list book directory: ${error?.message ?? error}`);
+  }
+
+  const found = [];
+  for (const entry of entries) {
+    if (entry.name.startsWith(".")) continue;
+    if (!MARKDOWN_FILE.test(entry.name)) continue;
+    const candidate = join(bookRoot, entry.name);
+    if (candidate !== absPath && entry.name === ownExport) continue;
+
+    const info = await statOrNull(candidate);
+    if (info === null || !info.isFile()) continue;
+
+    const head = await readHead(candidate, info.size).catch(() => "");
+    const stem = chapterStem(entry.name);
+    found.push({
+      id: entry.name,
+      title: chapterMeta(head, stem).title,
+      chapterPath: candidate,
+      name: entry.name,
+    });
+  }
+
+  found.sort((a, b) => chapterCollator.compare(a.name, b.name));
+  return {
+    bookRoot,
+    chapters: found.map(({ name, ...chapter }) => chapter),
+  };
+}
+
+/**
+ * `/resolve`: open one file as a library chapter list or as an ad-hoc book.
+ *
+ * Library mode wins whenever the file sits inside a configured root; the
+ * chapters are the exact `/books` objects for that library. Anything else is
+ * read-only ad-hoc mode.
+ */
+async function resolveBook(settings, rawPath) {
+  const { absPath } = await resolveAdhocFile(settings, rawPath);
+  const library = settings.libraries.find((candidate) => isWithin(candidate.root, absPath));
+
+  if (library !== undefined) {
+    const chapters = await listChapters(library);
+    const id = toPosixPath(relative(library.root, absPath));
+    const index = chapters.findIndex((chapter) => chapter.id === id);
+    if (index === -1) throw new HttpError(404, "unknown-chapter");
+    return {
+      mode: "library",
+      path: absPath,
+      bookRoot: library.root,
+      libraryId: library.id,
+      annotationEnabled: true,
+      chapters,
+      index,
+    };
+  }
+
+  const adhoc = await listAdhocChapters(absPath);
+  const index = adhoc.chapters.findIndex((chapter) => chapter.chapterPath === absPath);
+  return {
+    mode: "adhoc",
+    path: absPath,
+    bookRoot: adhoc.bookRoot,
+    libraryId: null,
+    annotationEnabled: false,
+    chapters: adhoc.chapters,
+    index,
+  };
+}
+
 // ── annotation store ───────────────────────────────────────────────────────
 
 /** A store value with a null prototype, so odd chapter ids cannot pollute. */
@@ -560,7 +900,7 @@ function normalizeChapterEntry(raw) {
 }
 
 /**
- * Load `.dsh-reader.json`.
+ * Load `.dsh_reader.json`.
  *
  * A missing file means "no annotations yet"; a corrupt file is a 500 so the
  * user never silently loses their notes to a reset.
@@ -681,10 +1021,10 @@ function renderAnnotationMarkdown({ title, chapterId, comments, locale }) {
   lines.push("");
   if (chinese) {
     lines.push(`> 源文件：\`${chapterId}\``);
-    lines.push("> 机器可读数据：`.dsh-reader.json`");
+    lines.push("> 机器可读数据：`.dsh_reader.json`");
   } else {
     lines.push(`> Source file: \`${chapterId}\``);
-    lines.push("> Machine-readable data: `.dsh-reader.json`");
+    lines.push("> Machine-readable data: `.dsh_reader.json`");
   }
   lines.push("");
   if (chinese) {
@@ -735,7 +1075,7 @@ function renderAnnotationMarkdown({ title, chapterId, comments, locale }) {
 /** Rebuild the markdown export for one chapter from the stored comments. */
 async function writeAnnotationExport(library, chapter, entry) {
   const head = await readHead(chapter.absPath, chapter.size).catch(() => "");
-  const title = titleFromText(head, chapter.stem);
+  const title = chapterMeta(head, chapter.stem).title;
   const markdown = renderAnnotationMarkdown({
     title,
     chapterId: chapter.id,
@@ -791,6 +1131,41 @@ async function handleHealth(settings) {
   };
 }
 
+/**
+ * `/config`: everything the browser needs before it can claim addresses or
+ * build prompts. Deliberately metadata only — it never reads chapter files.
+ */
+async function handleConfig(settings) {
+  return {
+    version: await readOwnVersion(),
+    claimMarkdown: settings.claimMarkdown,
+    pathBase: settings.pathBase,
+    annotation: {
+      types: [...settings.annotation.types],
+      conclusions: [...settings.annotation.conclusions],
+      locale: settings.annotation.locale,
+    },
+    promptTemplate: settings.promptTemplate,
+    libraries: settings.libraries.map((library) => ({
+      id: library.id,
+      title: library.title,
+      root: library.root,
+      annotationDir: library.annotationDir,
+    })),
+    errors: [...settings.errors],
+  };
+}
+
+/**
+ * `/resolve`: open one markdown file as a continuous book.
+ *
+ * The `path` query value arrives already URL-decoded; absolute paths win, and
+ * relative ones are resolved through `pathBase` / library roots.
+ */
+async function handleResolve(settings, url) {
+  return resolveBook(settings, url.searchParams.get("path"));
+}
+
 /** `/books`: list every readable library, collecting per-library failures. */
 async function handleBooks(settings) {
   const libraries = [];
@@ -814,20 +1189,48 @@ async function handleBooks(settings) {
   };
 }
 
-/** `/chapter`: read one markdown file, refusing to truncate oversized ones. */
+/** Refuse a chapter that would be truncated at `maxChapterBytes`. */
+function ensureChapterSize(size, settings) {
+  if (size > settings.maxChapterBytes) {
+    throw new HttpError(
+      400,
+      `chapter is too large: ${size} bytes exceeds the ${settings.maxChapterBytes}-byte limit (maxChapterBytes)`,
+    );
+  }
+}
+
+/**
+ * `/chapter`: read one markdown file, refusing to truncate oversized ones.
+ *
+ * `?path=<absolute .md>` is the ad-hoc, read-only form; `?lib=&file=` is the
+ * library form. Both return `{ id, title, text }`.
+ */
 async function handleChapter(settings, url) {
+  const pathParam = url.searchParams.get("path");
+  if (pathParam !== null) {
+    const { absPath, info } = await resolveAdhocFile(settings, pathParam, {
+      requireAbsolute: true,
+    });
+    ensureChapterSize(info.size, settings);
+
+    let text;
+    try {
+      text = await readFile(absPath, "utf8");
+    } catch (error) {
+      throw new HttpError(500, `cannot read chapter: ${error?.message ?? error}`);
+    }
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    const name = basename(absPath);
+    return { id: name, title: chapterMeta(text, chapterStem(name)).title, text };
+  }
+
   const libId = url.searchParams.get("lib");
   const fileParam = url.searchParams.get("file");
   if (libId === null || libId === "") throw new HttpError(400, "missing lib parameter");
   const library = findLibrary(settings, libId);
   const chapter = await resolveChapter(library, fileParam);
 
-  if (chapter.size > settings.maxChapterBytes) {
-    throw new HttpError(
-      400,
-      `chapter is too large: ${chapter.size} bytes exceeds the ${settings.maxChapterBytes}-byte limit (maxChapterBytes)`,
-    );
-  }
+  ensureChapterSize(chapter.size, settings);
 
   let text;
   try {
@@ -836,7 +1239,7 @@ async function handleChapter(settings, url) {
     throw new HttpError(500, `cannot read chapter: ${error?.message ?? error}`);
   }
   if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-  return { id: chapter.id, title: titleFromText(text, chapter.stem), text };
+  return { id: chapter.id, title: chapterMeta(text, chapter.stem).title, text };
 }
 
 /** `/annotations` (GET): comments plus the paths the browser shows. */
@@ -971,7 +1374,7 @@ function readJsonBody(req) {
   });
 }
 
-/** Send JSON with the headers every dsh-reader response carries. */
+/** Send JSON with the headers every dsh_reader response carries. */
 function sendJson(res, status, body) {
   if (res.headersSent) {
     res.end();
@@ -986,7 +1389,7 @@ function sendJson(res, status, body) {
   res.end(payload);
 }
 
-/** Map `/api/dsh-reader/...` to the bare route name. */
+/** Map `/api/dsh_reader/...` to the bare route name. */
 function routeOf(pathname) {
   let route = pathname;
   if (route === ROUTE_PREFIX) {
@@ -1043,9 +1446,17 @@ function createHandler(settings) {
           if (method === "POST") throw new HttpError(405, "method not allowed");
           payload = await handleHealth(settings);
           break;
+        case "config":
+          if (method === "POST") throw new HttpError(405, "method not allowed");
+          payload = await handleConfig(settings);
+          break;
         case "books":
           if (method === "POST") throw new HttpError(405, "method not allowed");
           payload = await handleBooks(settings);
+          break;
+        case "resolve":
+          if (method === "POST") throw new HttpError(405, "method not allowed");
+          payload = await handleResolve(settings, url);
           break;
         case "chapter":
           if (method === "POST") throw new HttpError(405, "method not allowed");
@@ -1074,7 +1485,7 @@ function createHandler(settings) {
 
 // ── plugin entry point ─────────────────────────────────────────────────────
 
-export const name = "dsh-reader";
+export const name = "dsh_reader";
 export const inject = ["webServer"];
 
 /**
@@ -1110,6 +1521,6 @@ export function apply(ctx, config) {
     else register();
   } catch (error) {
     // Never let a host registration problem look like a config failure.
-    console.warn(`[dsh-reader] failed to register HTTP routes: ${error?.message ?? error}`);
+    console.warn(`[dsh_reader] failed to register HTTP routes: ${error?.message ?? error}`);
   }
 }

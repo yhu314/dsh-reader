@@ -1,7 +1,7 @@
 {
-  "name": "dsh-reader",
+  "name": "dsh_reader",
   "version": "0.1.0",
-  "description": "Continuous markdown book reader with inline annotations for the DeepSeek Harness Web GUI",
+  "description": "Continuous markdown book reader with inline annotations for the DeepSeek Harness Web GUI: opens .md files as one scrollable book in the right Sidebar.",
   "type": "module",
   "exports": {
     ".": "./index.js",
@@ -23,7 +23,8 @@
     "dsh",
     "markdown",
     "reader",
-    "annotation"
+    "annotation",
+    "sidebar"
   ],
   "dsh": {
     "bundle": {
@@ -38,6 +39,7 @@
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-primitives",
         "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
         "@deepseek-ai/dsh-client-ui-layout"
       ]
     }

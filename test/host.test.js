@@ -1,4 +1,4 @@
-// Tests for the dsh-reader host half.
+// Tests for the dsh_reader host half.
 //
 // Run with:
 //   node --test test/
@@ -34,7 +34,7 @@ function createClient(config) {
   apply(ctx, config);
   assert.ok(captured !== null, "apply() must register a web server route");
   assert.equal(captured.kind, "prefix");
-  assert.equal(captured.path, "/api/dsh-reader");
+  assert.equal(captured.path, "/api/dsh_reader");
   return captured;
 }
 
@@ -110,6 +110,9 @@ async function request(client, url, options = {}) {
 let workspace;
 let bookRoot;
 let annotationDir;
+let metaRoot;
+let adhocRoot;
+let exportRoot;
 let client;
 
 const CHAPTER_ONE = "# 第001章 军报\n\n第一段正文。\n\n血泼了他一脸。\n";
@@ -135,15 +138,33 @@ const baseConfig = () => ({
   maxChapterBytes: 1024 * 1024,
 });
 
+const metaConfig = (order) => ({
+  libraries: [
+    {
+      id: "meta-book",
+      root: metaRoot,
+      ...(order === undefined ? {} : { order }),
+    },
+  ],
+  annotation: { types: ["note"], conclusions: ["accept"], locale: "zh" },
+  pathBase: workspace,
+});
+
 before(async () => {
-  workspace = await mkdtemp(join(tmpdir(), "dsh-reader-"));
+  workspace = await mkdtemp(join(tmpdir(), "dsh_reader-"));
   bookRoot = join(workspace, "book");
   annotationDir = join(bookRoot, "annotations");
+  metaRoot = join(workspace, "meta");
+  adhocRoot = join(workspace, "adhoc");
+  exportRoot = join(workspace, "export");
 
   await mkdir(annotationDir, { recursive: true });
   await mkdir(join(bookRoot, "卷上"), { recursive: true });
   await mkdir(join(bookRoot, "草稿"), { recursive: true });
   await mkdir(join(bookRoot, "fake.md"), { recursive: true }); // non-regular "chapter"
+  await mkdir(metaRoot, { recursive: true });
+  await mkdir(adhocRoot, { recursive: true });
+  await mkdir(exportRoot, { recursive: true });
 
   await writeFile(join(bookRoot, "第001章.md"), CHAPTER_ONE, "utf8");
   await writeFile(join(bookRoot, "第002章.md"), CHAPTER_TWO, "utf8");
@@ -154,6 +175,39 @@ before(async () => {
   await writeFile(join(bookRoot, "notes.txt"), "not a chapter\n", "utf8");
   await writeFile(join(annotationDir, "leak.md"), "# stray export\n", "utf8");
   await writeFile(join(workspace, "secret.md"), "# outside the library\n", "utf8");
+
+  // Frontmatter ordering / title fixtures.
+  await writeFile(
+    join(metaRoot, "c-tie.md"),
+    "---\ntitle: 三号排前\norder: 1\n---\n\n正文一。\n",
+    "utf8",
+  );
+  await writeFile(
+    join(metaRoot, "z-first.md"),
+    "---\ntitle: 第一章 起始\norder: 1\n---\n\n# 不应使用这个标题\n\n正文二。\n",
+    "utf8",
+  );
+  await writeFile(
+    join(metaRoot, "y-second.md"),
+    '---\ntitle: "第二章 承接"\norder: 2\n---\n\n正文三。\n',
+    "utf8",
+  );
+  await writeFile(join(metaRoot, "a-plain.md"), "# A 无 frontmatter\n\n正文四。\n", "utf8");
+  await writeFile(join(metaRoot, "b-plain.md"), "没有标题，只有正文。\n", "utf8");
+
+  // Ad-hoc book fixtures (outside any library root).
+  await writeFile(join(adhocRoot, "a.md"), "# A 章\n\nA 正文。\n", "utf8");
+  await writeFile(join(adhocRoot, "b.md"), "---\ntitle: B 章\n---\n\nB 正文。\n", "utf8");
+  await writeFile(join(adhocRoot, ".hidden.md"), "# 隐藏\n", "utf8");
+  await writeFile(join(adhocRoot, "notes.txt"), "not a chapter\n", "utf8");
+
+  // A `.markdown` chapter plus its `<stem>.md` annotation export.
+  await writeFile(join(exportRoot, "c.markdown"), "# C 章\n\nC 正文。\n", "utf8");
+  await writeFile(
+    join(exportRoot, "c.md"),
+    "# C 章 — 批注\n\n> 机器可读数据：`.dsh_reader.json`\n",
+    "utf8",
+  );
 
   client = createClient(baseConfig());
 });
@@ -167,7 +221,7 @@ after(async () => {
 // ── health ─────────────────────────────────────────────────────────────────
 
 test("GET /health reports plugin, version and library count", async () => {
-  const res = await request(client, "/api/dsh-reader/health");
+  const res = await request(client, "/api/dsh_reader/health");
   assert.equal(res.status, 200);
   assert.equal(res.ended, true);
   assert.equal(res.json.ok, true);
@@ -177,10 +231,68 @@ test("GET /health reports plugin, version and library count", async () => {
   assert.equal(res.headers["cache-control"], "no-store");
 });
 
+// ── config ─────────────────────────────────────────────────────────────────
+
+test("GET /config exposes neutral defaults, claimMarkdown and no chapter data", async () => {
+  const defaults = createClient({
+    libraries: [{ id: "plain", root: bookRoot, annotationDir }],
+  });
+
+  let res = await request(defaults, "/api/dsh_reader/config");
+  assert.equal(res.status, 200);
+  assert.match(res.json.version, /^\d+\.\d+\.\d+/);
+  assert.equal(res.json.claimMarkdown, "all");
+  assert.equal(res.json.pathBase, null);
+  assert.deepEqual(res.json.annotation, {
+    types: ["note", "question", "fix", "idea"],
+    conclusions: ["accept", "reject", "defer"],
+    locale: "zh",
+  });
+  assert.equal(
+    res.json.promptTemplate,
+    "请按 {annotationFile} 中的批注修改 {chapterFile}。",
+  );
+  assert.deepEqual(res.json.errors, []);
+  assert.deepEqual(res.json.libraries, [
+    {
+      id: "plain",
+      title: "book",
+      root: bookRoot,
+      annotationDir,
+    },
+  ]);
+  assert.deepEqual(
+    Object.keys(res.json.libraries[0]).sort(),
+    ["annotationDir", "id", "root", "title"],
+  );
+  assert.ok(!("chapters" in res.json.libraries[0]), "/config must not read chapters");
+
+  // The English locale changes only the default prompt; explicit values win.
+  res = await request(
+    createClient({ libraries: [], claimMarkdown: "off", annotation: { locale: "en" } }),
+    "/api/dsh_reader/config",
+  );
+  assert.equal(res.json.claimMarkdown, "off");
+  assert.equal(res.json.annotation.locale, "en");
+  assert.equal(
+    res.json.promptTemplate,
+    "Revise {chapterFile} according to {annotationFile}.",
+  );
+  assert.deepEqual(res.json.libraries, []);
+
+  // Invalid claimMarkdown is reported but falls back to "all".
+  res = await request(
+    createClient({ libraries: [], claimMarkdown: "sometimes" }),
+    "/api/dsh_reader/config",
+  );
+  assert.equal(res.json.claimMarkdown, "all");
+  assert.ok(res.json.errors.some((message) => /claimMarkdown/.test(message)));
+});
+
 // ── books ──────────────────────────────────────────────────────────────────
 
 test("GET /books sorts naturally, extracts titles and skips noise", async () => {
-  const res = await request(client, "/api/dsh-reader/books");
+  const res = await request(client, "/api/dsh_reader/books");
   assert.equal(res.status, 200);
   assert.deepEqual(res.json.errors, []);
   assert.equal(res.json.libraries.length, 1);
@@ -200,6 +312,11 @@ test("GET /books sorts naturally, extracts titles and skips noise", async () => 
     library.chapters.map((chapter) => chapter.title),
     ["第001章 军报", "第002章", "第010章"],
   );
+  // No frontmatter in these fixtures.
+  assert.deepEqual(
+    library.chapters.map((chapter) => chapter.order),
+    [null, null, null],
+  );
 
   // Hidden files, non-markdown files, the annotation subtree, and (because
   // recursive is false) nested directories are all excluded.
@@ -211,6 +328,7 @@ test("GET /books sorts naturally, extracts titles and skips noise", async () => 
 
   const first = library.chapters[0];
   assert.equal(first.annotationFile, "第001章.md");
+  assert.equal(first.chapterPath, "book/第001章.md");
   assert.equal(first.annotationPath, "book/annotations/第001章.md");
   assert.ok(first.size > 0);
   assert.equal(typeof first.mtime, "number");
@@ -239,7 +357,7 @@ test("recursive, include and exclude are honoured", async () => {
     ],
   });
 
-  const res = await request(recursive, "/api/dsh-reader/books");
+  const res = await request(recursive, "/api/dsh_reader/books");
   assert.equal(res.status, 200);
   const library = res.json.libraries[0];
   assert.deepEqual(
@@ -250,12 +368,56 @@ test("recursive, include and exclude are honoured", async () => {
   assert.ok(!library.chapters.some((chapter) => chapter.id === "annotations/leak.md"));
 });
 
+// ── frontmatter and ordering ───────────────────────────────────────────────
+
+test("frontmatter title/order are parsed; auto sorts ordered files first", async () => {
+  const metaClient = createClient(metaConfig());
+  const res = await request(metaClient, "/api/dsh_reader/books");
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.json.errors, []);
+
+  const chapters = res.json.libraries[0].chapters;
+  // order 1 (tie → natural name), order 2, then the unordered files naturally.
+  assert.deepEqual(
+    chapters.map((chapter) => chapter.id),
+    ["c-tie.md", "z-first.md", "y-second.md", "a-plain.md", "b-plain.md"],
+  );
+  // frontmatter title > H1 > stem; quoted YAML titles are unquoted.
+  assert.deepEqual(
+    chapters.map((chapter) => chapter.title),
+    ["三号排前", "第一章 起始", "第二章 承接", "A 无 frontmatter", "b-plain"],
+  );
+  assert.deepEqual(
+    chapters.map((chapter) => chapter.order),
+    [1, 1, 2, null, null],
+  );
+
+  // The same title resolution is used when a chapter is opened directly.
+  const opened = await request(
+    metaClient,
+    query("/api/dsh_reader/chapter", { lib: "meta-book", file: "z-first.md" }),
+  );
+  assert.equal(opened.status, 200);
+  assert.equal(opened.json.title, "第一章 起始");
+  assert.match(opened.json.text, /# 不应使用这个标题/);
+});
+
+test("order: filename ignores frontmatter and sorts naturally by name", async () => {
+  const filenameClient = createClient(metaConfig("filename"));
+  const res = await request(filenameClient, "/api/dsh_reader/books");
+  assert.equal(res.status, 200);
+  assert.deepEqual(
+    res.json.libraries[0].chapters.map((chapter) => chapter.id),
+    ["a-plain.md", "b-plain.md", "c-tie.md", "y-second.md", "z-first.md"],
+  );
+});
+
 // ── chapter reading ────────────────────────────────────────────────────────
 
 test("GET /chapter returns text and the extracted title", async () => {
   const res = await request(
     client,
-    query("/api/dsh-reader/chapter", { lib: "test-book", file: "第001章.md" }),
+    query("/api/dsh_reader/chapter", { lib: "test-book", file: "第001章.md" }),
   );
   assert.equal(res.status, 200);
   assert.equal(res.json.id, "第001章.md");
@@ -266,19 +428,19 @@ test("GET /chapter returns text and the extracted title", async () => {
 test("unknown libraries and chapters return 404, bad requests 400", async () => {
   const unknownLibrary = await request(
     client,
-    query("/api/dsh-reader/chapter", { lib: "nope", file: "第001章.md" }),
+    query("/api/dsh_reader/chapter", { lib: "nope", file: "第001章.md" }),
   );
   assert.equal(unknownLibrary.status, 404);
 
   const unknownChapter = await request(
     client,
-    query("/api/dsh-reader/chapter", { lib: "test-book", file: "第999章.md" }),
+    query("/api/dsh_reader/chapter", { lib: "test-book", file: "第999章.md" }),
   );
   assert.equal(unknownChapter.status, 404);
 
   const missingFile = await request(
     client,
-    query("/api/dsh-reader/chapter", { lib: "test-book" }),
+    query("/api/dsh_reader/chapter", { lib: "test-book" }),
   );
   assert.equal(missingFile.status, 400);
 });
@@ -288,14 +450,14 @@ test("unknown libraries and chapters return 404, bad requests 400", async () => 
 test("path traversal, absolute paths and non-regular files are rejected", async () => {
   const traversal = await request(
     client,
-    query("/api/dsh-reader/chapter", { lib: "test-book", file: "../secret.md" }),
+    query("/api/dsh_reader/chapter", { lib: "test-book", file: "../secret.md" }),
   );
   assert.equal(traversal.status, 403);
   assert.equal(traversal.headers["cache-control"], "no-store");
 
   const absolute = await request(
     client,
-    query("/api/dsh-reader/chapter", {
+    query("/api/dsh_reader/chapter", {
       lib: "test-book",
       file: join(workspace, "secret.md"),
     }),
@@ -304,27 +466,177 @@ test("path traversal, absolute paths and non-regular files are rejected", async 
 
   const directory = await request(
     client,
-    query("/api/dsh-reader/chapter", { lib: "test-book", file: "fake.md" }),
+    query("/api/dsh_reader/chapter", { lib: "test-book", file: "fake.md" }),
   );
   assert.equal(directory.status, 404);
 
   const hidden = await request(
     client,
-    query("/api/dsh-reader/chapter", { lib: "test-book", file: ".隐藏.md" }),
+    query("/api/dsh_reader/chapter", { lib: "test-book", file: ".隐藏.md" }),
   );
   assert.equal(hidden.status, 404);
 
   const annotationExport = await request(
     client,
-    query("/api/dsh-reader/chapter", { lib: "test-book", file: "annotations/leak.md" }),
+    query("/api/dsh_reader/chapter", { lib: "test-book", file: "annotations/leak.md" }),
   );
   assert.equal(annotationExport.status, 404);
 
   const nonMarkdown = await request(
     client,
-    query("/api/dsh-reader/chapter", { lib: "test-book", file: "notes.txt" }),
+    query("/api/dsh_reader/chapter", { lib: "test-book", file: "notes.txt" }),
   );
   assert.equal(nonMarkdown.status, 404);
+});
+
+// ── resolve / ad-hoc books ─────────────────────────────────────────────────
+
+test("GET /resolve opens a library file with the full book and correct index", async () => {
+  const books = await request(client, "/api/dsh_reader/books");
+  const expectedChapters = books.json.libraries[0].chapters;
+  const target = join(bookRoot, "第002章.md");
+
+  let res = await request(client, query("/api/dsh_reader/resolve", { path: target }));
+  assert.equal(res.status, 200);
+  assert.equal(res.json.mode, "library");
+  assert.equal(res.json.path, target);
+  assert.equal(res.json.bookRoot, bookRoot);
+  assert.equal(res.json.libraryId, "test-book");
+  assert.equal(res.json.annotationEnabled, true);
+  assert.equal(res.json.index, 1);
+  assert.deepEqual(res.json.chapters, expectedChapters);
+
+  // Relative paths resolve through pathBase …
+  res = await request(client, query("/api/dsh_reader/resolve", { path: "book/第002章.md" }));
+  assert.equal(res.status, 200);
+  assert.equal(res.json.mode, "library");
+  assert.equal(res.json.path, target);
+  assert.equal(res.json.index, 1);
+
+  // … and through library roots when pathBase is not configured.
+  const noBase = createClient({
+    libraries: [{ id: "plain", root: bookRoot, annotationDir }],
+    annotation: { locale: "zh" },
+  });
+  res = await request(noBase, query("/api/dsh_reader/resolve", { path: "第002章.md" }));
+  assert.equal(res.status, 200);
+  assert.equal(res.json.mode, "library");
+  assert.equal(res.json.libraryId, "plain");
+  assert.equal(res.json.path, target);
+});
+
+test("GET /resolve opens a file outside libraries as an ad-hoc read-only book", async () => {
+  const target = join(adhocRoot, "b.md");
+  let res = await request(client, query("/api/dsh_reader/resolve", { path: target }));
+  assert.equal(res.status, 200);
+  assert.equal(res.json.mode, "adhoc");
+  assert.equal(res.json.path, target);
+  assert.equal(res.json.bookRoot, adhocRoot);
+  assert.equal(res.json.libraryId, null);
+  assert.equal(res.json.annotationEnabled, false);
+  assert.equal(res.json.index, 1);
+  assert.deepEqual(res.json.chapters, [
+    {
+      id: "a.md",
+      title: "A 章",
+      chapterPath: join(adhocRoot, "a.md"),
+    },
+    {
+      id: "b.md",
+      title: "B 章",
+      chapterPath: target,
+    },
+  ]);
+
+  // Relative ad-hoc paths resolve through pathBase too.
+  res = await request(client, query("/api/dsh_reader/resolve", { path: "adhoc/a.md" }));
+  assert.equal(res.status, 200);
+  assert.equal(res.json.mode, "adhoc");
+  assert.equal(res.json.path, join(adhocRoot, "a.md"));
+  assert.equal(res.json.index, 0);
+
+  // A `.markdown` chapter's own `<stem>.md` annotation export is not a chapter.
+  res = await request(
+    client,
+    query("/api/dsh_reader/resolve", { path: join(exportRoot, "c.markdown") }),
+  );
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.json.chapters, [
+    {
+      id: "c.markdown",
+      title: "C 章",
+      chapterPath: join(exportRoot, "c.markdown"),
+    },
+  ]);
+  assert.equal(res.json.index, 0);
+});
+
+test("GET /resolve 404s for missing, hidden, non-markdown and directory paths", async () => {
+  for (const badPath of [
+    join(adhocRoot, "missing.md"),
+    join(adhocRoot, ".hidden.md"),
+    join(adhocRoot, "notes.txt"),
+    join(bookRoot, ".隐藏.md"),
+    adhocRoot,
+  ]) {
+    const res = await request(client, query("/api/dsh_reader/resolve", { path: badPath }));
+    assert.equal(res.status, 404, `expected 404 for ${badPath}`);
+  }
+
+  const relativeMiss = await request(
+    client,
+    query("/api/dsh_reader/resolve", { path: "nowhere/nope.md" }),
+  );
+  assert.equal(relativeMiss.status, 404);
+
+  const missingParam = await request(client, "/api/dsh_reader/resolve");
+  assert.equal(missingParam.status, 400);
+});
+
+test("GET /chapter reads an absolute ad-hoc markdown path", async () => {
+  let res = await request(
+    client,
+    query("/api/dsh_reader/chapter", { path: join(adhocRoot, "a.md") }),
+  );
+  assert.equal(res.status, 200);
+  assert.equal(res.json.id, "a.md");
+  assert.equal(res.json.title, "A 章");
+  assert.match(res.json.text, /A 正文/);
+
+  // Frontmatter title wins in the ad-hoc form too.
+  res = await request(
+    client,
+    query("/api/dsh_reader/chapter", { path: join(adhocRoot, "b.md") }),
+  );
+  assert.equal(res.status, 200);
+  assert.equal(res.json.title, "B 章");
+
+  const relative = await request(
+    client,
+    query("/api/dsh_reader/chapter", { path: "adhoc/a.md" }),
+  );
+  assert.equal(relative.status, 400);
+
+  for (const badPath of [
+    join(adhocRoot, "notes.txt"),
+    join(adhocRoot, "missing.md"),
+    join(adhocRoot, ".hidden.md"),
+    adhocRoot,
+  ]) {
+    const bad = await request(
+      client,
+      query("/api/dsh_reader/chapter", { path: badPath }),
+    );
+    assert.equal(bad.status, 404, `expected 404 for ${badPath}`);
+  }
+
+  const tiny = createClient({ ...baseConfig(), maxChapterBytes: 16 });
+  const oversized = await request(
+    tiny,
+    query("/api/dsh_reader/chapter", { path: join(adhocRoot, "a.md") }),
+  );
+  assert.equal(oversized.status, 400);
+  assert.match(oversized.json.error, /too large/i);
 });
 
 // ── annotations lifecycle ──────────────────────────────────────────────────
@@ -333,7 +645,7 @@ test("annotations: create, list, resolve, delete, and regenerate markdown", asyn
   // Empty at first.
   let res = await request(
     client,
-    query("/api/dsh-reader/annotations", { lib: "test-book", file: "第001章.md" }),
+    query("/api/dsh_reader/annotations", { lib: "test-book", file: "第001章.md" }),
   );
   assert.equal(res.status, 200);
   assert.deepEqual(res.json.comments, []);
@@ -341,7 +653,7 @@ test("annotations: create, list, resolve, delete, and regenerate markdown", asyn
   assert.equal(res.json.annotationPath, "book/annotations/第001章.md");
 
   // Create A1.
-  res = await request(client, "/api/dsh-reader/annotations", {
+  res = await request(client, "/api/dsh_reader/annotations", {
     method: "POST",
     body: {
       lib: "test-book",
@@ -370,7 +682,7 @@ test("annotations: create, list, resolve, delete, and regenerate markdown", asyn
   assert.equal(a1.createdAt, a1.updatedAt);
 
   // Create A2 (auto id) with a pipe in the note to exercise table escaping.
-  res = await request(client, "/api/dsh-reader/annotations", {
+  res = await request(client, "/api/dsh_reader/annotations", {
     method: "POST",
     body: {
       lib: "test-book",
@@ -393,13 +705,13 @@ test("annotations: create, list, resolve, delete, and regenerate markdown", asyn
   // GET returns the stored list.
   res = await request(
     client,
-    query("/api/dsh-reader/annotations", { lib: "test-book", file: "第001章.md" }),
+    query("/api/dsh_reader/annotations", { lib: "test-book", file: "第001章.md" }),
   );
   assert.equal(res.json.comments.length, 2);
 
   // Store file is the machine-readable source of truth.
   const store = JSON.parse(
-    await readFile(join(annotationDir, ".dsh-reader.json"), "utf8"),
+    await readFile(join(annotationDir, ".dsh_reader.json"), "utf8"),
   );
   assert.equal(store.version, 1);
   const entry = store.chapters["第001章.md"];
@@ -411,7 +723,7 @@ test("annotations: create, list, resolve, delete, and regenerate markdown", asyn
   let markdown = await readFile(join(annotationDir, "第001章.md"), "utf8");
   assert.match(markdown, /^# 第001章 军报 — 批注\n/);
   assert.match(markdown, /> 源文件：`第001章\.md`/);
-  assert.match(markdown, /> 机器可读数据：`\.dsh-reader\.json`/);
+  assert.match(markdown, /> 机器可读数据：`\.dsh_reader\.json`/);
   assert.match(markdown, /\n共 2 条，未结案 2 条。\n/);
   assert.match(markdown, /\| 编号 \| 位置 \| 类型 \| 内容 \| 结论 \| 状态 \|/);
   assert.match(markdown, /\| A1 \| 第 12 段 \| 文风 \| 这一句太轻。 \| 采纳 \| 未结案 \|/);
@@ -423,7 +735,7 @@ test("annotations: create, list, resolve, delete, and regenerate markdown", asyn
   assert.ok(markdown.endsWith("\n"));
 
   // Resolve A2.
-  res = await request(client, "/api/dsh-reader/annotations", {
+  res = await request(client, "/api/dsh_reader/annotations", {
     method: "POST",
     body: { lib: "test-book", file: "第001章.md", op: "resolve", id: "A2", resolved: true },
   });
@@ -438,7 +750,7 @@ test("annotations: create, list, resolve, delete, and regenerate markdown", asyn
   );
 
   // Delete A1.
-  res = await request(client, "/api/dsh-reader/annotations", {
+  res = await request(client, "/api/dsh_reader/annotations", {
     method: "POST",
     body: { lib: "test-book", file: "第001章.md", op: "delete", id: "A1" },
   });
@@ -453,7 +765,7 @@ test("annotations: create, list, resolve, delete, and regenerate markdown", asyn
   assert.ok(!markdown.includes("### A1"));
 
   // The next created comment continues from the largest existing suffix.
-  res = await request(client, "/api/dsh-reader/annotations", {
+  res = await request(client, "/api/dsh_reader/annotations", {
     method: "POST",
     body: {
       lib: "test-book",
@@ -469,7 +781,7 @@ test("annotations: create, list, resolve, delete, and regenerate markdown", asyn
   );
 
   // Unknown comments are a 404, not a silent no-op.
-  res = await request(client, "/api/dsh-reader/annotations", {
+  res = await request(client, "/api/dsh_reader/annotations", {
     method: "POST",
     body: { lib: "test-book", file: "第001章.md", op: "delete", id: "A99" },
   });
@@ -489,7 +801,7 @@ test("annotation.locale en localizes generated markdown", async () => {
     annotation: { ...baseConfig().annotation, locale: "en" },
   });
 
-  const res = await request(englishClient, "/api/dsh-reader/annotations", {
+  const res = await request(englishClient, "/api/dsh_reader/annotations", {
     method: "POST",
     body: {
       lib: "english-book",
@@ -526,7 +838,7 @@ test("annotationPath is absolute when pathBase is not configured", async () => {
   });
   const res = await request(
     plainClient,
-    query("/api/dsh-reader/annotations", { lib: "plain", file: "第001章.md" }),
+    query("/api/dsh_reader/annotations", { lib: "plain", file: "第001章.md" }),
   );
   assert.equal(res.status, 200);
   assert.equal(res.json.annotationPath, join(annotationDir, "第001章.md"));
@@ -542,7 +854,7 @@ test("oversized chapters fail with 400 instead of truncating", async () => {
   });
   const res = await request(
     tiny,
-    query("/api/dsh-reader/chapter", { lib: "tiny", file: "第001章.md" }),
+    query("/api/dsh_reader/chapter", { lib: "tiny", file: "第001章.md" }),
   );
   assert.equal(res.status, 400);
   assert.match(res.json.error, /too large/i);
@@ -573,7 +885,7 @@ test("invalid libraries land in /books errors instead of throwing", async () => 
   });
   assert.ok(captured !== null);
 
-  const res = await request(captured, "/api/dsh-reader/books");
+  const res = await request(captured, "/api/dsh_reader/books");
   assert.equal(res.status, 200);
   assert.deepEqual(
     res.json.libraries.map((library) => library.id),
@@ -586,7 +898,7 @@ test("invalid libraries land in /books errors instead of throwing", async () => 
 
   // A completely unusable libraries value is reported, not thrown.
   const broken = createClient({ libraries: "nope" });
-  const brokenRes = await request(broken, "/api/dsh-reader/books");
+  const brokenRes = await request(broken, "/api/dsh_reader/books");
   assert.equal(brokenRes.status, 200);
   assert.deepEqual(brokenRes.json.libraries, []);
   assert.ok(brokenRes.json.errors.some((message) => /libraries must be an array/.test(message)));
@@ -599,19 +911,19 @@ test("invalid libraries land in /books errors instead of throwing", async () => 
 // ── HTTP guards ────────────────────────────────────────────────────────────
 
 test("non-loopback hosts and unsupported methods are rejected as JSON", async () => {
-  const remote = await request(client, "/api/dsh-reader/health", {
+  const remote = await request(client, "/api/dsh_reader/health", {
     host: "evil.example:80",
   });
   assert.equal(remote.status, 403);
   assert.equal(remote.headers["cache-control"], "no-store");
   assert.match(remote.json.error, /forbidden host/);
 
-  const method = await request(client, "/api/dsh-reader/health", {
+  const method = await request(client, "/api/dsh_reader/health", {
     method: "POST",
     body: {},
   });
   assert.equal(method.status, 405);
 
-  const unknown = await request(client, "/api/dsh-reader/nope");
+  const unknown = await request(client, "/api/dsh_reader/nope");
   assert.equal(unknown.status, 404);
 });
