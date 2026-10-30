@@ -1429,10 +1429,326 @@ function createHandler(settings) {
   };
 }
 
+// ── agent tool ─────────────────────────────────────────────────────────────
+
+const TOOL_NAME = "reader_annotations";
+
+const TOOL_DESCRIPTION = [
+  "Read and resolve the annotations written in the dsh_reader Book viewer.",
+  '`list` returns the annotations of one chapter, or every annotated chapter in a library;',
+  '`resolve` marks annotations as resolved after you have applied them to the chapter.',
+  "Annotations are plain markdown notes under the library's annotationDir; the returned chapterPath and annotationPath are the same paths the viewer shows, so you can read or edit the files directly.",
+].join(" ");
+
+/** Resolve the library argument against a possibly multi-library config. */
+function toolLibrary(settings, requested) {
+  if (typeof requested === "string" && requested.trim() !== "") {
+    return findLibrary(settings, requested.trim());
+  }
+  if (settings.libraries.length === 0) {
+    throw new Error("dsh_reader has no libraries configured");
+  }
+  if (settings.libraries.length === 1) return settings.libraries[0];
+  throw new Error(
+    `library is required; configured libraries: ${settings.libraries.map((library) => library.id).join(", ")}`,
+  );
+}
+
+/** Compact model-facing view of one stored comment. */
+function annotationView(comment) {
+  return {
+    id: comment.id,
+    note: comment.note,
+    quote: comment.quote,
+    paragraph: Number.isInteger(comment.block) ? comment.block : null,
+    resolved: comment.resolved === true,
+  };
+}
+
+/** The library fields the browser and the tool both see. */
+function libraryView(library) {
+  return {
+    id: library.id,
+    title: library.title,
+    root: library.root,
+    annotationDir: library.annotationDir,
+  };
+}
+
+/** Paths for one chapter, in the same spelling `/books` and `/resolve` use. */
+function chapterView(library, chapter, extra = {}) {
+  const annotationFile = extra.annotationFile || chapter.annotationFile || annotationFileFor(chapter);
+  return {
+    id: chapter.id,
+    title: extra.title || chapter.title || chapter.id,
+    chapterPath: chapterPathFor(library, chapter.id),
+    annotationPath: annotationPathFor(library, annotationFile),
+  };
+}
+
+function countsOf(comments) {
+  const open = comments.filter((comment) => !comment.resolved).length;
+  return { total: comments.length, open, resolved: comments.length - open };
+}
+
+/** `list` implementation: one chapter, or every annotated chapter of a library. */
+async function listAnnotations(settings, args) {
+  const library = toolLibrary(settings, args.library);
+  const store = await loadAnnotationStore(library.annotationDir);
+  const onlyOpen = args.onlyOpen === true;
+
+  if (typeof args.chapter === "string" && args.chapter.trim() !== "") {
+    const chapter = await resolveChapter(library, args.chapter.trim());
+    const meta = (await listChapters(library)).find((candidate) => candidate.id === chapter.id);
+    const entry = store.chapters[chapter.id];
+    const all = entry === undefined ? [] : entry.comments;
+    const annotations = all.filter((comment) => !onlyOpen || !comment.resolved).map(annotationView);
+    return {
+      action: "list",
+      library: libraryView(library),
+      chapter: chapterView(library, chapter, meta || {}),
+      counts: countsOf(all),
+      annotations,
+    };
+  }
+
+  const chapters = await listChapters(library);
+  const byId = new Map(chapters.map((chapter) => [chapter.id, chapter]));
+  const rows = [];
+  for (const [chapterId, entry] of Object.entries(store.chapters)) {
+    if (!entry || !Array.isArray(entry.comments) || entry.comments.length === 0) continue;
+    const chapter = byId.get(chapterId);
+    if (chapter === undefined) continue;
+    const counts = countsOf(entry.comments);
+    if (onlyOpen && counts.open === 0) continue;
+    rows.push({
+      id: chapterId,
+      title: chapter.title,
+      annotationPath: chapter.annotationPath,
+      total: counts.total,
+      open: counts.open,
+    });
+  }
+  rows.sort((left, right) => chapterComparator(library.order)(byId.get(left.id), byId.get(right.id)));
+  const aggregate = rows.reduce(
+    (sum, row) => ({ total: sum.total + row.total, open: sum.open + row.open }),
+    { total: 0, open: 0 },
+  );
+  return {
+    action: "list",
+    library: libraryView(library),
+    chapters: rows,
+    counts: { total: aggregate.total, open: aggregate.open, resolved: aggregate.total - aggregate.open },
+    annotations: [],
+  };
+}
+
+/** `resolve` implementation: mark ids (or every comment) resolved/reopened. */
+async function resolveAnnotations(settings, args) {
+  const library = toolLibrary(settings, args.library);
+  if (typeof args.chapter !== "string" || args.chapter.trim() === "") {
+    throw new Error("chapter is required for action=resolve");
+  }
+  const chapter = await resolveChapter(library, args.chapter.trim());
+  const meta = (await listChapters(library)).find((candidate) => candidate.id === chapter.id);
+  const store = await loadAnnotationStore(library.annotationDir);
+  const entry = store.chapters[chapter.id];
+  if (entry === undefined || entry.comments.length === 0) {
+    throw new Error(`no annotations found for ${chapter.id}`);
+  }
+
+  const all = args.all === true;
+  const wanted = new Set((Array.isArray(args.ids) ? args.ids : []).map(String));
+  if (!all && wanted.size === 0) {
+    throw new Error("pass ids (e.g. [\"A1\"]) or all=true for action=resolve");
+  }
+  const nextResolved = args.reopen !== true;
+  const now = Date.now();
+  let changed = 0;
+  for (const comment of entry.comments) {
+    if (!all && !wanted.has(comment.id)) continue;
+    if (comment.resolved === nextResolved) continue;
+    comment.resolved = nextResolved;
+    comment.updatedAt = now;
+    changed += 1;
+  }
+  if (!all) {
+    const missing = [...wanted].filter((id) => !entry.comments.some((comment) => comment.id === id));
+    if (missing.length > 0) throw new Error(`unknown annotation ids: ${missing.join(", ")}`);
+  }
+  entry.updatedAt = now;
+  store.chapters[chapter.id] = entry;
+  await saveAnnotationStore(library.annotationDir, store);
+  await writeAnnotationExport(library, chapter, entry);
+
+  return {
+    action: "resolve",
+    library: libraryView(library),
+    chapter: chapterView(library, chapter, meta || {}),
+    counts: countsOf(entry.comments),
+    annotations: entry.comments.map(annotationView),
+    changed,
+  };
+}
+
+/**
+ * Build the registry-ready `reader_annotations` tool for one configured profile.
+ *
+ * @param {object} settings normalized plugin settings
+ * @returns {object} tool definition for `ctx.tools.register`
+ */
+export function createAnnotationsTool(settings) {
+  return {
+    name: TOOL_NAME,
+    description: TOOL_DESCRIPTION,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["action"],
+      properties: {
+        action: {
+          type: "string",
+          enum: ["list", "resolve"],
+          description: "list: read annotations; resolve: mark annotations resolved (or reopen them).",
+        },
+        library: {
+          type: "string",
+          description: "Library id. Optional when exactly one library is configured.",
+        },
+        chapter: {
+          type: "string",
+          description:
+            "Chapter id relative to the library root, e.g. 第026章.md. Omit in list to summarise every annotated chapter.",
+        },
+        onlyOpen: {
+          type: "boolean",
+          description: "list: return only unresolved annotations (default false).",
+        },
+        ids: {
+          type: "array",
+          items: { type: "string" },
+          description: "resolve: annotation ids to change, e.g. [\"A1\", \"A2\"].",
+        },
+        all: {
+          type: "boolean",
+          description: "resolve: apply to every annotation in the chapter.",
+        },
+        reopen: {
+          type: "boolean",
+          description: "resolve: set resolved=false instead of true.",
+        },
+      },
+    },
+    output: {
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["action", "library", "counts", "annotations"],
+        properties: {
+          action: { type: "string" },
+          changed: { type: "integer" },
+          library: {
+            type: "object",
+            additionalProperties: false,
+            required: ["id", "title", "root", "annotationDir"],
+            properties: {
+              id: { type: "string" },
+              title: { type: "string" },
+              root: { type: "string" },
+              annotationDir: { type: "string" },
+            },
+          },
+          chapter: {
+            type: "object",
+            additionalProperties: false,
+            required: ["id", "title", "chapterPath", "annotationPath"],
+            properties: {
+              id: { type: "string" },
+              title: { type: "string" },
+              chapterPath: { type: "string" },
+              annotationPath: { type: "string" },
+            },
+          },
+          chapters: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["id", "title", "annotationPath", "total", "open"],
+              properties: {
+                id: { type: "string" },
+                title: { type: "string" },
+                annotationPath: { type: "string" },
+                total: { type: "integer" },
+                open: { type: "integer" },
+              },
+            },
+          },
+          counts: {
+            type: "object",
+            additionalProperties: false,
+            required: ["total", "open", "resolved"],
+            properties: {
+              total: { type: "integer" },
+              open: { type: "integer" },
+              resolved: { type: "integer" },
+            },
+          },
+          annotations: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["id", "note", "quote", "paragraph", "resolved"],
+              properties: {
+                id: { type: "string" },
+                note: { type: "string" },
+                quote: { type: "string" },
+                paragraph: { type: ["integer", "null"] },
+                resolved: { type: "boolean" },
+              },
+            },
+          },
+        },
+      },
+      render: (args, value) => {
+        const lines = [];
+        if (value.chapter) lines.push(`${value.chapter.title || value.chapter.id} — ${value.counts.open} open / ${value.counts.total}`);
+        else lines.push(`${value.library.title}: ${value.counts.open} open / ${value.counts.total} annotations`);
+        for (const annotation of value.annotations || []) {
+          const paragraph = Number.isInteger(annotation.paragraph) ? ` ¶${annotation.paragraph}` : "";
+          lines.push(`- ${annotation.id}${paragraph}${annotation.resolved ? " (resolved)" : ""}: ${annotation.note}`);
+        }
+        for (const chapter of value.chapters || []) {
+          lines.push(`- ${chapter.id}: ${chapter.open} open / ${chapter.total}`);
+        }
+        if (value.changed !== undefined) lines.push(`changed: ${value.changed}`);
+        return [{ type: "text", text: lines.join("\n") }];
+      },
+    },
+    async execute(args) {
+      const action = args && args.action;
+      if (action === "list") return listAnnotations(settings, args);
+      if (action === "resolve") return resolveAnnotations(settings, args);
+      throw new Error(`unknown action: ${String(action)}`);
+    },
+    presentCall: (args) => ({
+      card: "generic",
+      title: "Reader annotations",
+      kind: "other",
+      rawInput: args,
+    }),
+  };
+}
+
 // ── plugin entry point ─────────────────────────────────────────────────────
 
+
 export const name = "dsh_reader";
-export const inject = ["webServer"];
+
+// Exported for tests and for compositions that want to inspect a profile first.
+export { normalizeConfig };
+export const inject = ["webServer", "tools"];
 
 /**
  * Cordis entry point: normalize config, then register the prefixed route.
@@ -1468,5 +1784,19 @@ export function apply(ctx, config) {
   } catch (error) {
     // Never let a host registration problem look like a config failure.
     console.warn(`[dsh_reader] failed to register HTTP routes: ${error?.message ?? error}`);
+  }
+
+  // Agent tool: the same annotation store the viewer writes, without copy-paste.
+  if (ctx.tools && typeof ctx.tools.register === "function") {
+    const registerTool = () => {
+      const disposal = ctx.tools.register(createAnnotationsTool(settings));
+      return typeof disposal === "function" ? disposal : () => undefined;
+    };
+    try {
+      if (typeof ctx.effect === "function") ctx.effect(registerTool, "dsh_reader: annotations tool");
+      else registerTool();
+    } catch (error) {
+      console.warn(`[dsh_reader] failed to register the annotations tool: ${error?.message ?? error}`);
+    }
   }
 }

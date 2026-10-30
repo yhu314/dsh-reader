@@ -42,6 +42,9 @@ renderer in the existing dropdown, not a replacement.
   `.dsh_reader.json` beside them. No database, no lock-in, git-friendly.
 - **Send to chat.** One click copies a prompt naming the annotation file and the chapter, using
   project-relative paths for `pathBase`.
+- **An agent tool.** The Host registers `reader_annotations`, so the agent can list a chapter's
+  annotations (or only the open ones), and mark them resolved after revising — no copy-paste
+  round trip. The tool and the viewer share one store.
 - **Generic.** Any folder of `.md` files is a book; the generated markdown export language is
   configurable (`zh` by default because DSH's UI language is).
 - **Theme-native, dependency-free.** Plain browser JavaScript, no bundler, no npm dependencies; the
@@ -166,7 +169,6 @@ document viewer plus one bookshelf page. See [`docs/API.md`](docs/API.md) for th
 
 ## Roadmap
 
-- Host tool so the agent can list/resolve annotations without a paste round-trip.
 - Images/tables, in-book search, per-book reading width, split panes.
 - Optional "open markdown as Book by default" (raise the viewer's priority band).
 

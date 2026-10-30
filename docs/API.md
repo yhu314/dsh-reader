@@ -168,6 +168,29 @@ Body: `{ "lib": "zhaoyun", "file": "第001章.md", "op": "save", "comment": { ..
 The response is the same shape as `GET /annotations` after the write. Annotations are only
 available in library mode; ad-hoc books are read-only.
 
+## Agent tool: `reader_annotations`
+
+The Host registers one model-facing tool so the agent can read and settle the same annotations the
+viewer writes, without a copy-paste round trip.
+
+| Parameter | Type | Meaning |
+| --- | --- | --- |
+| `action` | `list` \| `resolve` (required) | read annotations, or mark them resolved/reopened |
+| `library` | string | library id; optional when exactly one library is configured |
+| `chapter` | string | chapter id relative to the library root (`第026章.md`); required for `resolve` |
+| `onlyOpen` | boolean | `list`: return only unresolved annotations |
+| `ids` | string[] | `resolve`: annotation ids (e.g. `["A1"]`) |
+| `all` | boolean | `resolve`: every annotation in the chapter |
+| `reopen` | boolean | `resolve`: set `resolved=false` instead of true |
+
+`list` with a `chapter` returns `{ action, library, chapter, counts, annotations }`; without one it
+returns one row per annotated chapter (`chapters`) plus aggregate counts. Every annotation row is
+`{ id, note, quote, paragraph, resolved }` (paragraph is the 1-based block number). `resolve`
+regenerates the markdown export and returns the updated list plus `changed`.
+
+The tool and the HTTP routes share one store: anything the agent resolves shows up in the viewer's
+drawer, and vice versa.
+
 ## Storage
 
 - `<annotationDir>/.dsh_reader.json` — machine-readable source of truth:

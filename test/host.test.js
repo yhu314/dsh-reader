@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { after, before, test } from "node:test";
 
-import { apply } from "../index.js";
+import { apply, createAnnotationsTool, normalizeConfig } from "../index.js";
 
 // ── HTTP harness ───────────────────────────────────────────────────────────
 
@@ -915,4 +915,67 @@ test("non-loopback hosts and unsupported methods are rejected as JSON", async ()
 
   const unknown = await request(client, "/api/dsh_reader/nope");
   assert.equal(unknown.status, 404);
+});
+
+// ── agent tool ─────────────────────────────────────────────────────────────
+
+test("reader_annotations lists, filters and resolves stored annotations", async () => {
+  const root = await mkdtemp(join(tmpdir(), "dsh_reader-tool-"));
+  try {
+    const annotationDir = join(root, "annotations");
+    await mkdir(annotationDir, { recursive: true });
+    const chapterPath = join(root, "第001章.md");
+    await writeFile(chapterPath, "# 第001章\n\n第一段。\n\n第二段。\n", "utf8");
+    await writeFile(
+      join(annotationDir, ".dsh_reader.json"),
+      JSON.stringify({
+        version: 1,
+        chapters: {
+          "第001章.md": {
+            source: chapterPath,
+            updatedAt: 1,
+            comments: [
+              { id: "A1", quote: "第一段", block: 1, note: "轻一点", resolved: false, createdAt: 1, updatedAt: 1 },
+              { id: "A2", quote: "第二段", block: 2, note: "删掉", resolved: true, createdAt: 1, updatedAt: 1 },
+            ],
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    const settings = normalizeConfig({ libraries: [{ id: "tool-book", root, annotationDir }], pathBase: root });
+    const tool = createAnnotationsTool(settings);
+    assert.equal(tool.name, "reader_annotations");
+
+    let result = await tool.execute({ action: "list", chapter: "第001章.md" });
+    assert.equal(result.counts.total, 2);
+    assert.equal(result.annotations.length, 2);
+    assert.equal(result.chapter.annotationPath, "annotations/第001章.md");
+    assert.ok(!("chapters" in result));
+
+    result = await tool.execute({ action: "list", chapter: "第001章.md", onlyOpen: true });
+    assert.deepEqual(result.annotations.map((item) => item.id), ["A1"]);
+
+    result = await tool.execute({ action: "resolve", chapter: "第001章.md", ids: ["A1"] });
+    assert.equal(result.changed, 1);
+    assert.equal(result.annotations.find((item) => item.id === "A1").resolved, true);
+
+    const store = JSON.parse(await readFile(join(annotationDir, ".dsh_reader.json"), "utf8"));
+    assert.equal(store.chapters["第001章.md"].comments.find((item) => item.id === "A1").resolved, true);
+    const exported = await readFile(join(annotationDir, "第001章.md"), "utf8");
+    assert.match(exported, /共 2 条，未结案 0 条/);
+
+    result = await tool.execute({ action: "list" });
+    assert.equal(result.chapters.length, 1);
+    assert.equal(result.chapters[0].id, "第001章.md");
+    assert.equal(result.chapters[0].open, 0);
+
+    await assert.rejects(() => tool.execute({ action: "resolve", chapter: "第001章.md" }), /pass ids/);
+    await assert.rejects(() => tool.execute({ action: "resolve", chapter: "第001章.md", ids: ["A9"] }), /unknown annotation ids/);
+    await assert.rejects(() => tool.execute({ action: "bogus" }), /unknown action/);
+    await assert.rejects(() => tool.execute({ action: "list", library: "missing" }), /unknown-library/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
