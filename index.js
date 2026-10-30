@@ -838,16 +838,20 @@ async function resolveBook(settings, rawPath) {
     const chapters = await listChapters(library);
     const id = toPosixPath(relative(library.root, absPath));
     const index = chapters.findIndex((chapter) => chapter.id === id);
-    if (index === -1) throw new HttpError(404, "unknown-chapter");
-    return {
-      mode: "library",
-      path: absPath,
-      bookRoot: library.root,
-      libraryId: library.id,
-      annotationEnabled: true,
-      chapters,
-      index,
-    };
+    if (index !== -1) {
+      return {
+        mode: "library",
+        path: absPath,
+        bookRoot: library.root,
+        libraryId: library.id,
+        annotationEnabled: true,
+        chapters,
+        index,
+      };
+    }
+    // A markdown file inside a library root that the chapter list excludes
+    // (a draft subfolder, an annotation export, an include/exclude filter)
+    // still opens, read-only, as its own ad-hoc book instead of failing.
   }
 
   const adhoc = await listAdhocChapters(absPath);

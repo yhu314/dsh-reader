@@ -30,6 +30,7 @@ maxChapterBytes: 2097152
 `claimMarkdown` decides which `.md` resources the reader claims in the Sidebar:
 `all` opens every markdown file in the reader (the default; files outside a library open
 read-only), `libraries` claims only files inside a configured `root`, `off` claims none.
+It is browser-side gating only: the host still resolves any markdown path it is asked about.
 
 `order: auto` sorts by frontmatter `order` first (numeric, ascending), then naturally by file
 name (`Intl.Collator` numeric, so `第001章` < `第002章` < `第010章`). `filename` ignores frontmatter;
@@ -118,8 +119,10 @@ becomes an ad-hoc, read-only book.
 
 Ad-hoc mode: `mode: "adhoc"`, `libraryId: null`, `annotationEnabled: false`, chapters are the
 markdown files of `bookRoot` (its parent directory) with `id` = file name and absolute
-`chapterPath`s. `index` is the position of `path`. 404 when the path is missing, hidden, or not
-a markdown file.
+`chapterPath`s. `index` is the position of `path`. A markdown file inside a library root that the
+chapter list excludes (a draft subfolder, an annotation export, an include/exclude filter) also
+falls back to ad-hoc mode, read-only. 404 only when the path is missing, hidden, or not a markdown
+file.
 
 ## `GET /api/dsh_reader/chapter`
 
@@ -181,6 +184,8 @@ available in library mode; ad-hoc books are read-only.
 
 > 源文件：`第001章.md`
 > 机器可读数据：`.dsh_reader.json`
+
+共 1 条，未结案 1 条。
 
 | 编号 | 位置 | 类型 | 内容 | 结论 | 状态 |
 | --- | --- | --- | --- | --- | --- |

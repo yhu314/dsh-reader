@@ -571,6 +571,22 @@ test("GET /resolve opens a file outside libraries as an ad-hoc read-only book", 
   assert.equal(res.json.index, 0);
 });
 
+test("GET /resolve falls back to an ad-hoc book for an in-root file the chapter list excludes", async () => {
+  const target = join(bookRoot, "草稿", "第004章.md");
+  const res = await request(client, query("/api/dsh_reader/resolve", { path: target }));
+  assert.equal(res.status, 200);
+  assert.equal(res.json.mode, "adhoc");
+  assert.equal(res.json.path, target);
+  assert.equal(res.json.bookRoot, join(bookRoot, "草稿"));
+  assert.equal(res.json.libraryId, null);
+  assert.equal(res.json.annotationEnabled, false);
+  assert.ok(res.json.index >= 0);
+  // Its read-only chapter form is reachable through /chapter?path=.
+  const chapter = await request(client, query("/api/dsh_reader/chapter", { path: target }));
+  assert.equal(chapter.status, 200);
+  assert.equal(chapter.json.id, "第004章.md");
+});
+
 test("GET /resolve 404s for missing, hidden, non-markdown and directory paths", async () => {
   for (const badPath of [
     join(adhocRoot, "missing.md"),
