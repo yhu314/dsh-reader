@@ -47,5 +47,13 @@
   "scripts": {
     "test": "node --test test/*.test.js"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yhu314/dsh_reader.git"
+  },
+  "homepage": "https://github.com/yhu314/dsh_reader",
+  "bugs": {
+    "url": "https://github.com/yhu314/dsh_reader/issues"
+  }
 }
