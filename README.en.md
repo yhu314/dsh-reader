@@ -44,7 +44,7 @@ renderer in the existing dropdown, not a replacement.
   project-relative paths for `pathBase`.
 - **In-book search as you type.** The toolbar's magnifier searches the whole book server-side;
   keystrokes trigger a debounced query (~220 ms) and results refresh live, showing the chapter and a
-  context snippet. Enter searches at once; clicking a result jumps to the paragraph and flashes it.
+  context snippet. Enter searches at once, and `Ctrl+F` / `⌘F` opens the search field while working inside the reader (outside it, the browser's own find still applies). Clicking a result jumps to the paragraph and flashes it.
 - **Images and tables.** Local images load through DSH's authenticated `/api/file` route (relative
   paths resolve next to the chapter), and tables render as real HTML tables.
 - **Per-book reading width.** The width button cycles 620 / 760 / 920 px and stores the choice per

@@ -851,6 +851,8 @@ window.__ModuleLoader__.load({
       const searchTimerRef = useRef(null)
       const searchAbortRef = useRef(null)
       const searchSeqRef = useRef(0)
+      const rootRef = useRef(null)
+      const interactedRef = useRef(false)
       const [error, setError] = useState('')
 
       const scrollRef = useRef(null)
@@ -1077,6 +1079,51 @@ window.__ModuleLoader__.load({
         if (searchTimerRef.current) window.clearTimeout(searchTimerRef.current)
         if (searchAbortRef.current) searchAbortRef.current.abort()
       }, [searchOpen])
+
+      // Ctrl+F / Cmd+F opens the in-book search, scoped to this reader: it only
+      // takes over while the pointer/selection/focus is inside this pane, so the
+      // chat and other panes keep the browser's own find behaviour.
+      useEffect(() => {
+        const insideSelection = () => {
+          const root = rootRef.current
+          const selection = window.getSelection()
+          const anchor = selection && selection.anchorNode
+          if (!root || !anchor) return false
+          const element = anchor.nodeType === 1 ? anchor : anchor.parentElement
+          return Boolean(element && root.contains(element))
+        }
+        const insideFocus = () => {
+          const root = rootRef.current
+          const active = window.document.activeElement
+          return Boolean(root && active && root.contains(active))
+        }
+        const onPointerDown = (event) => {
+          const root = rootRef.current
+          interactedRef.current = Boolean(root && event.target && root.contains(event.target))
+        }
+        const onKeyDown = (event) => {
+          const key = String(event.key || '').toLowerCase()
+          if (key !== 'f' || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return
+          if (!(interactedRef.current || insideFocus() || insideSelection())) return
+          event.preventDefault()
+          event.stopPropagation()
+          setTocOpen(false)
+          setAnnOpen(false)
+          setSearchOpen(true)
+          window.setTimeout(() => {
+            const input = searchInputRef.current
+            if (!input) return
+            input.focus()
+            if (typeof input.select === 'function') input.select()
+          }, 20)
+        }
+        window.addEventListener('mousedown', onPointerDown, true)
+        window.addEventListener('keydown', onKeyDown, true)
+        return () => {
+          window.removeEventListener('mousedown', onPointerDown, true)
+          window.removeEventListener('keydown', onKeyDown, true)
+        }
+      }, [])
 
       const jumpToSearchMatch = useCallback(async (match) => {
         const index = chaptersMeta.findIndex((chapter) => chapter.id === match.chapterId)
@@ -1367,7 +1414,7 @@ window.__ModuleLoader__.load({
       const drawerComments = activeChapter ? activeChapter.comments || [] : []
       const unresolved = drawerComments.filter((comment) => !comment.resolved).length
 
-      return h('div', { className: 'dsr-root' },
+      return h('div', { className: 'dsr-root', ref: rootRef },
         h('div', { className: 'dsr-bar' },
           onBack ? h('button', { type: 'button', className: 'dsr-btn', title: backLabel || tr(t, 'back'), onClick: onBack }, h(IconChevron, { dir: 'left' }), backLabel || tr(t, 'back')) : null,
           h('button', { type: 'button', className: 'dsr-btn', disabled: activeIndex <= 0, title: tr(t, 'prev'), 'aria-label': tr(t, 'prev'), onClick: () => jumpTo(activeIndex - 1) }, h(IconChevron, { dir: 'left' })),
@@ -1377,7 +1424,7 @@ window.__ModuleLoader__.load({
           book.annotationEnabled
             ? h('button', { type: 'button', className: 'dsr-btn' + (annOpen ? ' dsr-btnOn' : ''), title: tr(t, 'annotations'), 'aria-label': tr(t, 'annotations'), onClick: () => { setAnnOpen((value) => !value); setTocOpen(false) } }, h(IconNote), unresolved > 0 ? String(unresolved) : '')
             : null,
-          h('button', { type: 'button', className: 'dsr-btn' + (searchOpen ? ' dsr-btnOn' : ''), title: tr(t, 'search'), 'aria-label': tr(t, 'search'), onClick: () => { setSearchOpen((value) => !value); setTocOpen(false); setAnnOpen(false) } }, h(IconSearch)),
+          h('button', { type: 'button', className: 'dsr-btn' + (searchOpen ? ' dsr-btnOn' : ''), title: tr(t, 'search') + ' (Ctrl/⌘ F)', 'aria-label': tr(t, 'search'), onClick: () => { setSearchOpen((value) => !value); setTocOpen(false); setAnnOpen(false) } }, h(IconSearch)),
           h('button', { type: 'button', className: 'dsr-btn', title: tr(t, 'width') + ': ' + width + 'px', 'aria-label': tr(t, 'width'), onClick: () => setWidth((value) => (value >= 920 ? 620 : value >= 760 ? 920 : 760)) }, h(IconWidth)),
           h('button', { type: 'button', className: 'dsr-btn', title: tr(t, 'sendToChat'), 'aria-label': tr(t, 'sendToChat'), onClick: copyPrompt }, '→'),
           h('button', { type: 'button', className: 'dsr-btn', title: tr(t, 'fontSmaller'), 'aria-label': tr(t, 'fontSmaller'), onClick: () => setFontSize((value) => Math.max(13, value - 1)) }, 'A−'),
