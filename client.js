@@ -53,6 +53,7 @@ window.__ModuleLoader__.load({
       totalChapters: '共 {n} 章',
       unsupported: '这个标签页没有可读的地址',
       viewerBook: '电子书',
+      annotationGone: '没找到这条批注在正文里的位置（文本可能改过了）',
       notThisSession: '阅读器未在这个会话启用',
       notThisSessionBody:
         '插件里配置了 sessions 白名单，当前会话不在名单内。刷新页面即可恢复内置预览；要在这里启用，把会话 id 加进 sessions。',
@@ -99,6 +100,7 @@ window.__ModuleLoader__.load({
       totalChapters: '{n} chapters',
       unsupported: 'This tab has no readable address',
       viewerBook: 'Book',
+      annotationGone: 'The annotated text is no longer in this chapter.',
       notThisSession: 'Reader is not enabled in this session',
       notThisSessionBody:
         'The plugin has a `sessions` allowlist and this session is not on it. Reload the page to get the built-in preview back; add this session id to `sessions` to use the reader here.',
@@ -153,6 +155,8 @@ window.__ModuleLoader__.load({
 .dsr-link{color:var(--dsw-alias-brand-primary,#7d97ff);text-decoration:none}
 .dsr-mark{background:rgba(77,107,254,.2);box-shadow:inset 0 -2px 0 rgba(77,107,254,.55);border-radius:3px;cursor:pointer;color:inherit;padding:0 1px}
 .dsr-mark:hover{background:rgba(77,107,254,.3)}
+.dsr-markFlash{animation:dsrMarkFlash 1.3s ease-out}
+@keyframes dsrMarkFlash{0%{background:rgba(77,107,254,.6);box-shadow:inset 0 -2px 0 rgba(77,107,254,.9)}100%{background:rgba(77,107,254,.2)}}
 .dsr-markResolved{background:rgba(120,130,145,.18);box-shadow:inset 0 -2px 0 rgba(120,130,145,.45)}
 .dsr-sentinel{height:1px}
 .dsr-hint{display:flex;justify-content:center;padding:16px 0 0;color:var(--dsw-alias-label-tertiary,#7b8090);font-size:11px}
@@ -1013,6 +1017,38 @@ window.__ModuleLoader__.load({
         })
       }, [])
 
+      // Drawer click: scroll the annotated passage into view and flash it.
+      const scrollToComment = useCallback((chapterId, commentId) => {
+        setAnnOpen(false)
+        window.setTimeout(() => {
+          const root = scrollRef.current
+          if (!root) return
+          const sections = root.querySelectorAll('[data-chapter-id]')
+          let section = null
+          for (const candidate of sections) {
+            if (candidate.getAttribute('data-chapter-id') === chapterId) {
+              section = candidate
+              break
+            }
+          }
+          if (!section) return
+          const mark = section.querySelector('mark[data-cid="' + String(commentId).replace(/"/g, '\\"') + '"]')
+          if (!mark) {
+            showToast(tr(t, 'annotationGone'))
+            return
+          }
+          try {
+            mark.scrollIntoView({ block: 'center', behavior: 'smooth' })
+          } catch {
+            const rootRect = root.getBoundingClientRect()
+            const markRect = mark.getBoundingClientRect()
+            root.scrollTop += markRect.top - rootRect.top - rootRect.height / 2
+          }
+          mark.classList.add('dsr-markFlash')
+          window.setTimeout(() => mark.classList.remove('dsr-markFlash'), 1400)
+        }, 60)
+      }, [showToast, t])
+
       const applyComments = useCallback((chapterId, comments) => {
         setLoaded((previous) => {
           const next = { ...previous }
@@ -1149,7 +1185,8 @@ window.__ModuleLoader__.load({
                         key: comment.id,
                         t,
                         comment,
-                        onOpen: (rect) => {
+                        onOpen: () => activeChapter && scrollToComment(activeChapter.id, comment.id),
+                        onEdit: (rect) => {
                           const chapter = loadedRef.current[activeIndex]
                           if (chapter) openFormForMark(chapter, comment.id, rect)
                         },
@@ -1296,7 +1333,7 @@ window.__ModuleLoader__.load({
     }
 
     // ── annotation drawer row ─────────────────────────────────────────────
-    function AnnotationRow({ t, comment, onOpen, onResolve, onDelete }) {
+    function AnnotationRow({ t, comment, onOpen, onEdit, onResolve, onDelete }) {
       const ref = useRef(null)
       const rectOf = () => {
         const rect = ref.current ? ref.current.getBoundingClientRect() : { left: 0, top: 0, bottom: 0 }
@@ -1311,6 +1348,7 @@ window.__ModuleLoader__.load({
         comment.quote ? h('p', { className: 'dsr-annQuote' }, '「' + comment.quote + '」') : null,
         comment.note ? h('p', { className: 'dsr-annNote' }, comment.note) : null,
         h('div', { className: 'dsr-annActions' },
+          h('button', { type: 'button', className: 'dsr-btn', onClick: (event) => { event.stopPropagation(); onEdit(rectOf()) } }, tr(t, 'edit')),
           h('button', { type: 'button', className: 'dsr-btn', onClick: (event) => { event.stopPropagation(); onResolve() } }, comment.resolved ? tr(t, 'reopen') : tr(t, 'resolve')),
           h('button', { type: 'button', className: 'dsr-btn dsr-btnDanger', onClick: (event) => { event.stopPropagation(); onDelete() } }, tr(t, 'delete'))))
     }
