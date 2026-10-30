@@ -10,14 +10,14 @@
     "./icon": "./icon.svg"
   },
   "files": [
+    "README.md",
+    "README.en.md",
     "index.js",
     "client.js",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
-    "README.md",
-    "LICENSE",
-    "README.zh.md"
+    "LICENSE"
   ],
   "keywords": [
     "dsh-plugin",
