@@ -17,8 +17,5 @@
       types: [事实, 逻辑, 文风, 结构, 删减, 疑问]
       conclusions: [采纳, 驳回, 转细纲, 暂缓]
       locale: zh
-    claimMarkdown: all
-    # 只想在某个会话试用时，填该会话 id（其余会话保持内置预览）：
-    sessions: []
     pathBase: '/absolute/path/to/我的小说'
     promptTemplate: '请按 {annotationFile} 中的批注修改 {chapterFile}。逐条处理，并回报每条批注的结论。'

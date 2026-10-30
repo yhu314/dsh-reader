@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Reader",
-    "description": "Opens a folder of markdown files as one continuous book in the right Sidebar, with inline annotations you can hand to the agent."
+    "description": "Adds a Book viewer to the document preview: read a folder of markdown as one continuous book, annotate sentences, and hand the annotations to the agent."
   }
 }

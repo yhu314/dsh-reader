@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "阅读器",
-    "description": "把 markdown 文件夹当作一本书在右侧栏连续阅读，支持选中文字写批注，并可一键交给 agent 修改。"
+    "description": "在文档预览里新增「电子书」查看方式：把 markdown 文件夹连续阅读、选中句子写批注，并可一键交给 agent 修改。"
   }
 }

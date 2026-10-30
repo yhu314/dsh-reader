@@ -233,7 +233,7 @@ test("GET /health reports plugin, version and library count", async () => {
 
 // ── config ─────────────────────────────────────────────────────────────────
 
-test("GET /config exposes neutral defaults, claimMarkdown and no chapter data", async () => {
+test("GET /config exposes neutral defaults and no chapter data", async () => {
   const defaults = createClient({
     libraries: [{ id: "plain", root: bookRoot, annotationDir }],
   });
@@ -241,7 +241,6 @@ test("GET /config exposes neutral defaults, claimMarkdown and no chapter data", 
   let res = await request(defaults, "/api/dsh_reader/config");
   assert.equal(res.status, 200);
   assert.match(res.json.version, /^\d+\.\d+\.\d+/);
-  assert.equal(res.json.claimMarkdown, "all");
   assert.equal(res.json.pathBase, null);
   assert.deepEqual(res.json.annotation, {
     types: ["note", "question", "fix", "idea"],
@@ -269,42 +268,18 @@ test("GET /config exposes neutral defaults, claimMarkdown and no chapter data", 
 
   // The English locale changes only the default prompt; explicit values win.
   res = await request(
-    createClient({ libraries: [], claimMarkdown: "off", annotation: { locale: "en" } }),
+    createClient({ libraries: [], annotation: { locale: "en" } }),
     "/api/dsh_reader/config",
   );
-  assert.equal(res.json.claimMarkdown, "off");
   assert.equal(res.json.annotation.locale, "en");
   assert.equal(
     res.json.promptTemplate,
     "Revise {chapterFile} according to {annotationFile}.",
   );
   assert.deepEqual(res.json.libraries, []);
-
-  // Invalid claimMarkdown is reported but falls back to "all".
-  res = await request(
-    createClient({ libraries: [], claimMarkdown: "sometimes" }),
-    "/api/dsh_reader/config",
-  );
-  assert.equal(res.json.claimMarkdown, "all");
-  assert.ok(res.json.errors.some((message) => /claimMarkdown/.test(message)));
 });
 
 // ── books ──────────────────────────────────────────────────────────────────
-
-test("GET /config exposes the neutral vocabulary and an empty session allowlist", async () => {
-  const defaults = createClient({ libraries: [] });
-  const res = await request(defaults, "/api/dsh_reader/config");
-  assert.equal(res.status, 200);
-  assert.deepEqual(res.json.sessions, []);
-  assert.equal(res.json.claimMarkdown, "all");
-  assert.deepEqual(res.json.annotation.types, ["note", "question", "fix", "idea"]);
-  assert.deepEqual(res.json.annotation.conclusions, ["accept", "reject", "defer"]);
-  assert.equal(res.json.errors.length, 0);
-
-  const scoped = createClient({ ...baseConfig(), sessions: ["session-a", " session-b "] });
-  const scopedRes = await request(scoped, "/api/dsh_reader/config");
-  assert.deepEqual(scopedRes.json.sessions, ["session-a", "session-b"]);
-});
 
 test("GET /books sorts naturally, extracts titles and skips noise", async () => {
   const res = await request(client, "/api/dsh_reader/books");

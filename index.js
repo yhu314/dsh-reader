@@ -4,7 +4,7 @@
 // route on the DSH Web GUI:
 //
 //   GET  /api/dsh_reader/health       -> { ok, version, libraries }
-//   GET  /api/dsh_reader/config       -> { version, claimMarkdown, pathBase, annotation, ... }
+//   GET  /api/dsh_reader/config       -> { version, pathBase, annotation, libraries, ... }
 //   GET  /api/dsh_reader/books        -> { libraries, annotation, promptTemplate, errors }
 //   GET  /api/dsh_reader/resolve      -> { mode, path, bookRoot, chapters, index, ... }
 //   GET  /api/dsh_reader/chapter      -> { id, title, text }
@@ -46,7 +46,6 @@ const DEFAULT_PROMPT_TEMPLATE_ZH = "请按 {annotationFile} 中的批注修改 {
 const DEFAULT_PROMPT_TEMPLATE_EN = "Revise {chapterFile} according to {annotationFile}.";
 const DEFAULT_TYPES = ["note", "question", "fix", "idea"];
 const DEFAULT_CONCLUSIONS = ["accept", "reject", "defer"];
-const CLAIM_MARKDOWN_MODES = new Set(["all", "libraries", "off"]);
 const CHAPTER_ORDERS = new Set(["auto", "filename", "mtime"]);
 const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/;
 const MARKDOWN_FILE = /\.(?:md|markdown)$/i;
@@ -136,8 +135,6 @@ function stringArray(value, fallback) {
  *   libraries: Array<object>,
  *   errors: string[],
  *   annotation: { types: string[], conclusions: string[], locale: "zh"|"en" },
- *   claimMarkdown: "all"|"libraries"|"off",
- *   sessions: string[],
  *   pathBase: string|null,
  *   promptTemplate: string,
  *   maxChapterBytes: number,
@@ -160,30 +157,6 @@ function normalizeConfig(config) {
         ? "en"
         : "zh",
   };
-
-  let claimMarkdown = "all";
-  if (source.claimMarkdown !== undefined && source.claimMarkdown !== null) {
-    const value =
-      typeof source.claimMarkdown === "string" ? source.claimMarkdown.trim().toLowerCase() : "";
-    if (CLAIM_MARKDOWN_MODES.has(value)) {
-      claimMarkdown = value;
-    } else {
-      errors.push(
-        `claimMarkdown must be one of ${[...CLAIM_MARKDOWN_MODES].join(", ")}; using "all"`,
-      );
-    }
-  }
-
-  let sessions = [];
-  if (source.sessions !== undefined && source.sessions !== null) {
-    if (!Array.isArray(source.sessions)) {
-      errors.push("config.sessions must be an array of session ids; using all sessions");
-    } else {
-      sessions = source.sessions
-        .filter((entry) => typeof entry === "string" && entry.trim() !== "")
-        .map((entry) => entry.trim());
-    }
-  }
 
   const pathBase =
     typeof source.pathBase === "string" && source.pathBase.trim() !== ""
@@ -215,8 +188,6 @@ function normalizeConfig(config) {
     libraries,
     errors,
     annotation,
-    sessions,
-    claimMarkdown,
     pathBase,
     promptTemplate:
       typeof source.promptTemplate === "string" && source.promptTemplate.trim() !== ""
@@ -1155,8 +1126,6 @@ async function handleHealth(settings) {
 async function handleConfig(settings) {
   return {
     version: await readOwnVersion(),
-    claimMarkdown: settings.claimMarkdown,
-    sessions: [...settings.sessions],
     pathBase: settings.pathBase,
     annotation: {
       types: [...settings.annotation.types],

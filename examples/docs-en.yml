@@ -13,6 +13,5 @@
       types: [note, question, fix, idea]
       conclusions: [accept, reject, defer]
       locale: en
-    claimMarkdown: all
     pathBase: '/absolute/path/to/handbook'
     promptTemplate: 'Revise {chapterFile} according to the annotations in {annotationFile}. Handle every item and report the outcome for each.'

@@ -54,6 +54,7 @@ window.__ModuleLoader__.load({
       chapterCount: '章',
       totalChapters: '共 {n} 章',
       unsupported: '这个标签页没有可读的地址',
+      viewerBook: '电子书',
       notThisSession: '阅读器未在这个会话启用',
       notThisSessionBody:
         '插件里配置了 sessions 白名单，当前会话不在名单内。刷新页面即可恢复内置预览；要在这里启用，把会话 id 加进 sessions。',
@@ -101,6 +102,7 @@ window.__ModuleLoader__.load({
       chapterCount: 'chapters',
       totalChapters: '{n} chapters',
       unsupported: 'This tab has no readable address',
+      viewerBook: 'Book',
       notThisSession: 'Reader is not enabled in this session',
       notThisSessionBody:
         'The plugin has a `sessions` allowlist and this session is not on it. Reload the page to get the built-in preview back; add this session id to `sessions` to use the reader here.',
@@ -283,15 +285,6 @@ window.__ModuleLoader__.load({
       }
       return null
     }
-    function basenameOf(path) {
-      const parts = String(path || '').split('/')
-      return parts[parts.length - 1] || ''
-    }
-    function titleOfAddress(address) {
-      const parsed = parseFileAddress(address)
-      if (!parsed) return DICTS.zh.reader
-      return basenameOf(parsed.path).replace(/\.(md|markdown)$/i, '')
-    }
     function resolveClientPathFor(config, relativePath) {
       if (!relativePath) return relativePath
       if (relativePath.startsWith('/')) return relativePath
@@ -303,42 +296,6 @@ window.__ModuleLoader__.load({
     function resolveClientPath(relativePath) {
       return resolveClientPathFor(configValue, relativePath)
     }
-    function insideRoot(path, root) {
-      if (!path || !root) return false
-      const normalized = String(root).replace(/\/+$/, '')
-      return path === normalized || path.startsWith(normalized + '/')
-    }
-    /**
-     * Decide whether the reader takes a markdown resource away from the built-in
-     * preview. Errs on the safe side everywhere: an unknown config, an unknown
-     * address, or an error means "do not claim".
-     */
-    function claimWith(config, address) {
-      try {
-        const parsed = parseFileAddress(address)
-        if (!parsed) return false
-        const path = resolveClientPathFor(config, parsed.path)
-        if (!path) return false
-        // Until the host answers /config, keep the built-in preview in charge.
-        if (!config) return false
-        if (config.claimMarkdown === 'off') return false
-        const only = Array.isArray(config.sessions) ? config.sessions : []
-        if (only.length > 0) {
-          // Session-scoped rollout: every other session keeps the built-in preview.
-          if (!parsed.sessionId || !only.includes(parsed.sessionId)) return false
-        }
-        if (config.claimMarkdown === 'libraries') {
-          return (config.libraries || []).some((library) => insideRoot(path, library.root))
-        }
-        return true
-      } catch {
-        return false
-      }
-    }
-    function claimAddress(address) {
-      return claimWith(configValue, address)
-    }
-
     // ── markdown: blocks + inline renderer (dependency-free, prose-first) ──
     function stripFrontmatter(lines) {
       if (lines.length === 0) return lines
@@ -671,36 +628,49 @@ window.__ModuleLoader__.load({
           })))
     }
 
-    // ── file tab body (resource tab registered for *.md) ──────────────────
-    function FileTabBody(props) {
+    // ── Book viewer body (registered into the built-in document preview) ──
+    // The document preview hands every renderer a `resourceAddress`, the tab
+    // info hooks, and (for file resources) a `useResource` metadata hook whose
+    // `absolutePath` spares us from re-deriving the path ourselves.
+    function BookBodyWithResource(props) {
+      const resource = props.useResource(props.resourceAddress)
+      const absolutePath = resource && resource.value ? resource.value.absolutePath : undefined
+      return h(BookBodyInner, Object.assign({}, props, { absolutePath }))
+    }
+
+    function BookBody(props) {
+      return typeof props.useResource === 'function'
+        ? h(BookBodyWithResource, props)
+        : h(BookBodyInner, props)
+    }
+
+    function BookBodyInner(props) {
       const t = props.t
       const [state, setState] = useState({ status: 'loading' })
       const [attempt, setAttempt] = useState(0)
       const info = typeof props.useTabInfo === 'function' ? props.useTabInfo() : null
       const address =
         (info && info.tab && info.tab.contentId) ||
-        (props.tab && props.tab.contentId) ||
         props.resourceAddress ||
-        props.contentId ||
         ''
-      const onlySessions = configValue && Array.isArray(configValue.sessions) ? configValue.sessions : []
-      const sessionAllowed =
-        onlySessions.length === 0 || !props.sessionId || onlySessions.includes(props.sessionId)
 
       useEffect(() => {
-        if (!address || !sessionAllowed) return undefined
         let cancelled = false
         ;(async () => {
           setState({ status: 'loading' })
           try {
-            await loadConfig()
-            const parsed = parseFileAddress(address)
-            if (!parsed) throw new Error('unsupported address')
-            const path = resolveClientPath(parsed.path)
+            const config = await loadConfig()
+            let path = props.absolutePath
+            if (!path) {
+              const parsed = parseFileAddress(address)
+              if (!parsed) throw new Error('unsupported address')
+              path = resolveClientPath(parsed.path)
+            }
             const data = await callApi('/resolve?path=' + enc(path))
             if (cancelled) return
             setState({
               status: 'ready',
+              config,
               book: {
                 mode: data.mode,
                 libraryId: data.libraryId,
@@ -717,24 +687,19 @@ window.__ModuleLoader__.load({
         return () => {
           cancelled = true
         }
-      }, [address, attempt, sessionAllowed])
+      }, [address, attempt, props.absolutePath])
 
-      if (!address) return h(BookshelfBody, props)
-      if (!sessionAllowed) {
-        return h('div', { className: 'dsr-root' },
-          h('div', { className: 'dsr-setup' },
-            h('h2', null, tr(t, 'notThisSession')),
-            h('p', null, tr(t, 'notThisSessionBody'))))
+      if (state.status === 'loading') {
+        return h('div', { className: 'dsr-root' }, h('div', { className: 'dsr-empty' }, tr(t, 'loading')))
       }
-      if (state.status === 'loading') return h('div', { className: 'dsr-root' }, h('div', { className: 'dsr-empty' }, tr(t, 'loading')))
       if (state.status === 'error') {
         return h('div', { className: 'dsr-root' },
-          h('div', { className: 'dsr-empty' },
-            h('div', null, tr(t, 'error') + '：' + state.error),
-            h('div', { style: { marginTop: 10 } },
-              h('button', { type: 'button', className: 'dsr-btn', onClick: () => setAttempt((value) => value + 1) }, tr(t, 'retry')))))
+          h('div', { className: 'dsr-setup' },
+            h('h2', null, tr(t, 'error')),
+            h('p', null, state.error),
+            h('button', { type: 'button', className: 'dsr-btn', onClick: () => setAttempt((value) => value + 1) }, tr(t, 'retry'))))
       }
-      return h(Reader, { t, book: state.book, config: configValue })
+      return h(Reader, { t, book: state.book, config: state.config })
     }
 
     // ── reader (shared by file tabs and the bookshelf) ────────────────────
@@ -1331,21 +1296,22 @@ window.__ModuleLoader__.load({
         return this.props.children
       }
     }
-    function ReaderTabBody(props) {
-      return h(ReaderErrorBoundary, null, h(FileTabBody, props))
+    function BookSlotBody(props) {
+      return h(ReaderErrorBoundary, null, h(BookBody, props))
     }
     function ShelfTabBody(props) {
       return h(ReaderErrorBoundary, null, h(BookshelfBody, props))
     }
 
     // ── plugin body ───────────────────────────────────────────────────────
-    const READER_ID = 'dsh_reader/reader'
     const BOOKS_ID = 'dsh_reader/books'
-    const inject = ['slots', 'locale', 'sidebarRight', 'sidebarRightTabs']
+    const BOOK_VIEWER_ID = 'dsh_reader/book'
+    const inject = ['slots', 'locale', 'documentPreviews', 'sidebarRight', 'sidebarRightTabs']
 
     function apply(ctx) {
       sidebarRightRef = ctx.sidebarRight || null
       loadConfig().catch(() => {})
+      const t = ctx.locale.bind(NS)
 
       ctx.effect(() => {
         const tag = ensureStyle()
@@ -1355,29 +1321,36 @@ window.__ModuleLoader__.load({
       }, 'dsh_reader: styles')
       ctx.effect(() => ctx.locale.register(NS, DICTS), 'dsh_reader: dictionaries')
 
-      // Markdown resource type: makes the reader the default way to open *.md
-      // in the right Sidebar (the extension band outranks the built-in preview).
-      ctx.effect(
-        () =>
-          ctx.sidebarRightTabs.register({
-            id: READER_ID,
-            kind: READER_ID,
-            patterns: ['*.md', '*.markdown'],
-            priority: 'extension',
-            canOpen: (address) => claimAddress(address),
-            title: (address) => titleOfAddress(address),
-          }),
-        'dsh_reader: markdown tab type',
-      )
-      ctx.slots.inject('sidebar.right.pane.tab', () =>
+      // The "Book" viewer in the built-in document preview's viewer menu.
+      // `priority: "builtin"` keeps it an alternative rather than the default:
+      // the built-in Markdown implementation registers first, so it stays the
+      // renderer a markdown tab opens with. Registration is deferred one task
+      // to make that ordering deterministic.
+      ctx.effect(() => {
+        let dispose = null
+        const timer = window.setTimeout(() => {
+          try {
+            dispose = ctx.documentPreviews.register({
+              id: BOOK_VIEWER_ID,
+              extensions: ['md', 'markdown'],
+              priority: 'builtin',
+              title: () => t('viewerBook'),
+              loading: 'text-pages',
+              wrap: false,
+            })
+          } catch (error) {
+            console.warn('[dsh_reader] could not register the Book viewer', error)
+          }
+        }, 0)
+        return () => {
+          if (timer) window.clearTimeout(timer)
+          if (typeof dispose === 'function') dispose()
+        }
+      }, 'dsh_reader: book viewer metadata')
+      ctx.slots.inject('sidebar.right.tab.document', () =>
         ctx.slots.register(
-          {
-            name: 'sidebar.right.pane.tab',
-            key: READER_ID,
-            locale: NS,
-            inject: (sessionId) => ({ sessionId }),
-          },
-          ReaderTabBody,
+          { name: 'sidebar.right.tab.document', key: BOOK_VIEWER_ID, locale: NS },
+          BookSlotBody,
         ))
 
       // Bookshelf page: opened from the left Sidebar; lists libraries and
@@ -1387,18 +1360,13 @@ window.__ModuleLoader__.load({
           ctx.sidebarRightTabs.register({
             id: BOOKS_ID,
             kind: BOOKS_ID,
-            title: () => DICTS.zh.shelf,
+            title: () => t('shelf'),
           }),
         'dsh_reader: bookshelf tab type',
       )
       ctx.slots.inject('sidebar.right.pane.tab', () =>
         ctx.slots.register(
-          {
-            name: 'sidebar.right.pane.tab',
-            key: BOOKS_ID,
-            locale: NS,
-            inject: (sessionId) => ({ sessionId }),
-          },
+          { name: 'sidebar.right.pane.tab', key: BOOKS_ID, locale: NS },
           ShelfTabBody,
         ))
 
@@ -1422,10 +1390,9 @@ window.__ModuleLoader__.load({
       buildPrompt,
       stripFrontmatter,
       parseFileAddress,
-      claimAddress,
-      claimWith,
       // Exposed for harnesses that render the components outside the app.
-      FileTabBody,
+      BookBody,
+      BookBodyInner,
       BookshelfBody,
       Reader,
       ChapterView,

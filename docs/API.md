@@ -1,7 +1,7 @@
 # dsh_reader host API
 
-The browser half (a right-Sidebar tab type) talks to the host half over one prefix:
-`/api/dsh_reader/*`. Loopback-only, same origin as the Web GUI. Every response is JSON with
+The browser half (a **Book** viewer in the built-in document preview, plus a bookshelf page)
+talks to the host half over one prefix: `/api/dsh_reader/*`. Loopback-only, same origin as the Web GUI. Every response is JSON with
 `cache-control: no-store`. Errors: `{ "error": "<message>" }` with 400 / 403 / 404 / 500.
 
 ## Configuration (`cordis.patch.yml` row `dsh_reader`)
@@ -20,23 +20,17 @@ annotation:
   types: [note, question, fix, idea]           # neutral defaults
   conclusions: [accept, reject, defer]         # neutral defaults
   locale: zh                     # zh | en, headings of the generated markdown
-claimMarkdown: all               # all | libraries | off
-sessions: []                     # session ids allowed to claim markdown; [] = every session
 pathBase: /abs/path/project      # workspace root: resolves workspace-relative addresses,
                                  # and shortens paths in prompts
 promptTemplate: "Revise {chapterFile} according to {annotationFile}."
 maxChapterBytes: 2097152
 ```
 
-`sessions` is the session-scoped rollout switch: when it lists session ids, only markdown opened
-from those sessions is claimed by the reader; every other session keeps the built-in preview.
-The address carries the authorizing session id, so this is enforced per open, and the left-Sidebar
-entry hides itself where the current session is known to be outside the list.
-
-`claimMarkdown` decides which `.md` resources the reader claims in the Sidebar:
-`all` opens every markdown file in the reader (the default; files outside a library open
-read-only), `libraries` claims only files inside a configured `root`, `off` claims none.
-It is browser-side gating only: the host still resolves any markdown path it is asked about.
+The browser half adds one entry to the **built-in document preview's viewer menu** (Markdown /
+Code / Plain Text / **Book**). It never claims the open action itself, so markdown still opens with
+the built-in Markdown viewer unless the person picks Book for that tab. Choosing Book asks
+`/resolve` for the continuous book around the open file and renders it with the same chapter and
+annotation routes described below.
 
 `order: auto` sorts by frontmatter `order` first (numeric, ascending), then naturally by file
 name (`Intl.Collator` numeric, so `第001章` < `第002章` < `第010章`). `filename` ignores frontmatter;
@@ -57,8 +51,6 @@ The browser needs this before it can decide which addresses to claim and how to 
 ```json
 {
   "version": "0.1.0",
-  "claimMarkdown": "all",
-  "sessions": ["session-b5738371-9751-46cf-a281-4c4f9dd87609"],
   "pathBase": "/abs/path/project",
   "annotation": { "types": ["note"], "conclusions": ["accept"], "locale": "zh" },
   "promptTemplate": "...",

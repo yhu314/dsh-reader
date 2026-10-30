@@ -43,12 +43,12 @@ test('client module registers with the module loader', () => {
   assert.equal(captured.id, 'dsh_reader')
   const module = captured.factory(requireStub)
   assert.equal(module.name, 'dsh_reader')
-  assert.deepEqual(module.inject, ['slots', 'locale', 'sidebarRight', 'sidebarRightTabs'])
+  assert.deepEqual(module.inject, ['slots', 'locale', 'documentPreviews', 'sidebarRight', 'sidebarRightTabs'])
   assert.equal(typeof module.apply, 'function')
   assert.ok(module.__test)
 })
 
-const { splitBlocks, computeSegments, buildPrompt, inlineNodes, parseFileAddress, claimWith } = captured.factory(requireStub).__test
+const { splitBlocks, computeSegments, buildPrompt, inlineNodes, parseFileAddress, BookBody } = captured.factory(requireStub).__test
 
 test('splitBlocks: frontmatter, headings, paragraphs, scene break', () => {
   const blocks = splitBlocks(
@@ -153,32 +153,8 @@ test('parseFileAddress: absolute (session-less) form and garbage', () => {
   assert.equal(parseFileAddress('nope'), null)
 })
 
-const address = (sessionId, path) =>
-  `dsh-resource://file/session/${encodeURIComponent(sessionId)}/${encodeURIComponent(path)}`
-
-test('claimWith: never claims before the host config arrives', () => {
-  assert.equal(claimWith(null, address('s1', 'book/a.md')), false)
-})
-
-test('claimWith: claimMarkdown all claims session addresses', () => {
-  const config = { claimMarkdown: 'all', sessions: [] }
-  assert.equal(claimWith(config, address('s1', 'book/a.md')), true)
-  assert.equal(claimWith({ claimMarkdown: 'off' }, address('s1', 'book/a.md')), false)
-  assert.equal(claimWith(config, 'nope'), false)
-})
-
-test('claimWith: sessions allowlist keeps other sessions on the built-in preview', () => {
-  const config = { claimMarkdown: 'all', sessions: ['s1'] }
-  assert.equal(claimWith(config, address('s1', 'book/a.md')), true)
-  assert.equal(claimWith(config, address('s2', 'book/a.md')), false)
-  // Session-less addresses cannot be validated against a session allowlist.
-  assert.equal(claimWith(config, 'dsh-resource://file/absolute/%2Ftmp%2Fa.md'), false)
-})
-
-test('claimWith: libraries mode only claims files inside a configured root', () => {
-  const config = { claimMarkdown: 'libraries', sessions: [], pathBase: '/ws', libraries: [{ root: '/ws/book' }] }
-  assert.equal(claimWith(config, address('s1', 'book/a.md')), true)
-  assert.equal(claimWith(config, address('s1', 'other/a.md')), false)
+test('the Book viewer body is exported for the document preview slot', () => {
+  assert.equal(typeof BookBody, 'function')
 })
 
 test('inlineNodes / computeSegments tolerate a missing text value', () => {
