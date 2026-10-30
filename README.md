@@ -30,9 +30,11 @@ renderer in the existing dropdown, not a replacement.
 - **A bookshelf / directory.** The left Sidebar's **阅读** entry opens a page listing every
   configured library and its chapters; clicking a chapter reads it in place. Inside the reader a
   **目录** drawer lists the whole book.
-- **Inline annotations.** Select text → write the note → save. Existing annotations are highlighted
-  in the text; the drawer lists them and jumps back to the passage. No type or conclusion to pick —
-  the note is the whole annotation.
+- **Inline annotations.** Select text → right-click → **批注** (or use the floating button that
+  appears on selection) → write the note → save. Right-click an existing highlight to edit or
+  delete it. Existing annotations are highlighted in the text; the drawer lists them and jumps back
+  to the passage. No type and no conclusion to pick — the note is the whole annotation.
+  Annotations need a configured library: a folder opened as an ad-hoc book is read-only.
 - **Annotations are plain project files.** Each chapter's annotations are written to
   `<annotationDir>/<chapter>.md` (human- and agent-readable) with a machine-readable
   `.dsh_reader.json` beside them. No database, no lock-in, git-friendly.

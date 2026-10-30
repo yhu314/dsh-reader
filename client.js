@@ -181,6 +181,11 @@ window.__ModuleLoader__.load({
 .dsr-annActions{display:flex;gap:2px;justify-content:flex-end;margin-top:4px;opacity:0;transition:opacity .12s}
 .dsr-ann:hover .dsr-annActions{opacity:1}
 .dsr-tool{position:fixed;z-index:2147483000;display:flex;gap:3px;padding:3px;border-radius:9px;background:var(--dsw-specific-menu,var(--dsw-alias-bg-overlay,#23252b));border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));box-shadow:0 10px 28px rgba(0,0,0,.4)}
+.dsr-menu{position:fixed;z-index:2147483000;min-width:148px;padding:4px;border-radius:9px;background:var(--dsw-specific-menu,var(--dsw-alias-bg-overlay,#23252b));border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));box-shadow:0 12px 34px rgba(0,0,0,.42)}
+.dsr-menuItem{display:flex;align-items:center;gap:7px;width:100%;height:28px;padding:0 10px;border:none;border-radius:6px;background:0 0;color:var(--dsw-alias-label-primary,#e8e9ee);font:inherit;font-size:12px;text-align:left;cursor:pointer;white-space:nowrap}
+.dsr-menuItem:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08))}
+.dsr-menuItemDanger{color:var(--dsw-alias-state-error-primary,#ff7b72)}
+.dsr-menuSep{height:1px;margin:4px 6px;background:var(--dsw-alias-border-l2,rgba(255,255,255,.12))}
 .dsr-pop{position:fixed;z-index:2147483000;width:320px;max-height:min(76vh,500px);overflow-y:auto;padding:11px;border-radius:11px;background:var(--dsw-specific-menu,var(--dsw-alias-bg-overlay,#23252b));border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));box-shadow:0 14px 40px rgba(0,0,0,.45)}
 .dsr-popHead{display:flex;align-items:center;gap:7px;margin-bottom:7px;font-size:12px;color:var(--dsw-alias-label-secondary,#a9adba)}
 .dsr-quoted{margin:0 0 9px;padding:6px 9px;border-radius:7px;background:rgba(77,107,254,.1);border-left:2px solid rgba(77,107,254,.6);font-size:11px;line-height:1.55;color:var(--dsw-alias-label-secondary,#a9adba);max-height:86px;overflow:auto;white-space:pre-wrap}
@@ -707,6 +712,7 @@ window.__ModuleLoader__.load({
       const [annOpen, setAnnOpen] = useState(false)
       const [form, setForm] = useState(null)
       const [selection, setSelection] = useState(null)
+      const [menu, setMenu] = useState(null)
       const [toast, setToast] = useState(null)
       const [fontSize, setFontSize] = useState(() => readJson(UI_KEY, {}).fontSize || 16)
       const [error, setError] = useState('')
@@ -875,6 +881,9 @@ window.__ModuleLoader__.load({
           } else if (selectionRef.current) {
             setSelection(null)
             event.stopPropagation()
+          } else if (menu) {
+            setMenu(null)
+            event.stopPropagation()
           } else if (tocOpen || annOpen) {
             setTocOpen(false)
             setAnnOpen(false)
@@ -883,13 +892,14 @@ window.__ModuleLoader__.load({
         }
         window.addEventListener('keydown', onKeyDown, true)
         return () => window.removeEventListener('keydown', onKeyDown, true)
-      }, [tocOpen, annOpen])
+      }, [tocOpen, annOpen, menu])
 
       const activeChapter = loaded[active] || (loadedIndexes.length > 0 ? loaded[loadedIndexes[0]] : null)
       const activeIndex = activeChapter ? activeChapter.index : active
 
       const onMouseUp = useCallback(
         (event) => {
+          if (event.button === 2) return
           if (!book.annotationEnabled) return
           if (event.target && event.target.closest && event.target.closest('.dsr-pop, .dsr-tool, .dsr-drawer')) return
           const sel = window.getSelection()
@@ -920,6 +930,68 @@ window.__ModuleLoader__.load({
         },
         [book.annotationEnabled],
       )
+
+      // Right-click: annotate the selection, or edit/delete an annotation mark.
+      const onContextMenu = useCallback(
+        (event) => {
+          if (!book.annotationEnabled) return
+          const scroll = scrollRef.current
+          if (!scroll) return
+          let node = event.target
+          let markElement = null
+          while (node && node !== scroll) {
+            if (node.matches && node.matches('mark[data-cid]')) {
+              markElement = node
+              break
+            }
+            node = node.parentElement
+          }
+          if (markElement) {
+            event.preventDefault()
+            const rect = markElement.getBoundingClientRect()
+            setMenu({
+              kind: 'mark',
+              x: event.clientX,
+              y: event.clientY,
+              commentId: markElement.getAttribute('data-cid'),
+              chapterId: markElement.getAttribute('data-chapter-id'),
+              rect: { left: rect.left, top: rect.top, bottom: rect.bottom },
+            })
+            return
+          }
+          const sel = window.getSelection()
+          const raw = sel && !sel.isCollapsed ? sel.toString().trim() : ''
+          if (!raw) return
+          const range = sel.getRangeAt(0)
+          const anchorNode = sel.anchorNode
+          const element = anchorNode && anchorNode.nodeType === 3 ? anchorNode.parentElement : anchorNode
+          const blockElement = element && element.closest ? element.closest('[data-block]') : null
+          if (!blockElement || !scroll.contains(blockElement)) return
+          event.preventDefault()
+          const rect = range.getBoundingClientRect()
+          setMenu({
+            kind: 'selection',
+            x: event.clientX,
+            y: event.clientY,
+            chapterId: blockElement.getAttribute('data-chapter-id'),
+            block: Number(blockElement.getAttribute('data-block')) + 1,
+            quote: raw.slice(0, 600),
+            rect: { left: rect.left, top: rect.top, bottom: rect.bottom },
+          })
+        },
+        [book.annotationEnabled],
+      )
+
+      // Close the menu on any outside press.
+      useEffect(() => {
+        if (!menu) return undefined
+        const onDown = (event) => {
+          if (event.target && event.target.closest && event.target.closest('.dsr-menu')) return
+          setMenu(null)
+        }
+        window.addEventListener('mousedown', onDown, true)
+        return () => window.removeEventListener('mousedown', onDown, true)
+      }, [menu])
 
       const openFormForSelection = useCallback(() => {
         const pending = selectionRef.current
@@ -1028,7 +1100,7 @@ window.__ModuleLoader__.load({
           h('button', { type: 'button', className: 'dsr-btn', title: tr(t, 'sendToChat'), 'aria-label': tr(t, 'sendToChat'), onClick: copyPrompt }, '→'),
           h('button', { type: 'button', className: 'dsr-btn', title: tr(t, 'fontSmaller'), 'aria-label': tr(t, 'fontSmaller'), onClick: () => setFontSize((value) => Math.max(13, value - 1)) }, 'A−'),
           h('button', { type: 'button', className: 'dsr-btn', title: tr(t, 'fontLarger'), 'aria-label': tr(t, 'fontLarger'), onClick: () => setFontSize((value) => Math.min(30, value + 1)) }, 'A+')),
-        h('div', { className: 'dsr-scroll', ref: scrollRef, onMouseUp: onMouseUp, style: { '--dsr-fs': fontSize + 'px' } },
+        h('div', { className: 'dsr-scroll', ref: scrollRef, onMouseUp: onMouseUp, onContextMenu: onContextMenu, style: { '--dsr-fs': fontSize + 'px' } },
           h('div', { className: 'dsr-doc' },
             loadedIndexes.map((index) => {
               const chapter = loaded[index]
@@ -1110,6 +1182,52 @@ window.__ModuleLoader__.load({
               onSave: saveComment,
               onDelete: form.mode === 'edit' ? () => mutateComment(form.chapterId, 'delete', form.comment.id) : null,
             })
+          : null,
+        menu
+          ? h('div', {
+              className: 'dsr-menu',
+              style: {
+                left: Math.max(8, Math.min(window.innerWidth - 170, menu.x)) + 'px',
+                top: Math.max(8, Math.min(window.innerHeight - 130, menu.y)) + 'px',
+              },
+              onMouseDown: (event) => event.preventDefault(),
+              onContextMenu: (event) => event.preventDefault(),
+            },
+            menu.kind === 'selection'
+              ? h('button', {
+                  type: 'button',
+                  className: 'dsr-menuItem',
+                  onClick: () => {
+                    const pending = menu
+                    setMenu(null)
+                    setForm({ mode: 'new', quote: pending.quote, block: pending.block, chapterId: pending.chapterId, rect: pending.rect, comment: null })
+                  },
+                }, h(IconNote), tr(t, 'addAnnotation'))
+              : [
+                  h('button', {
+                    key: 'edit',
+                    type: 'button',
+                    className: 'dsr-menuItem',
+                    onClick: () => {
+                      const pending = menu
+                      setMenu(null)
+                      const chapter = Object.values(loadedRef.current).find((item) => item.id === pending.chapterId)
+                      if (chapter) openFormForMark(chapter, pending.commentId, pending.rect)
+                    },
+                  }, h(IconNote), tr(t, 'edit')),
+                  h('button', {
+                    key: 'delete',
+                    type: 'button',
+                    className: 'dsr-menuItem dsr-menuItemDanger',
+                    onClick: () => {
+                      const pending = menu
+                      setMenu(null)
+                      mutateComment(pending.chapterId, 'delete', pending.commentId)
+                    },
+                  }, tr(t, 'delete')),
+                ],
+            h('div', { className: 'dsr-menuSep' }),
+            h('button', { type: 'button', className: 'dsr-menuItem', onClick: () => setMenu(null) }, tr(t, 'cancel')))
           : null,
         toast ? h('div', { className: 'dsr-toast' + (toast.isError ? ' dsr-toastErr' : '') }, toast.text) : null)
     }
