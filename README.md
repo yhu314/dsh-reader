@@ -52,16 +52,21 @@ The plugin is a plain DSH bundle. Pick one:
 **From the UI** (recommended, no restart):
 
 1. Open **Plugins** in the DSH sidebar.
-2. **Add plugin** → paste the **absolute path** of this directory (or
-   `github:yhu314/dsh-reader` once published).
+2. **Add plugin** → paste `github:yhu314/dsh-reader` (or the absolute path of a local
+   checkout).
 3. **Enable now**, then reload the page.
 
 **From the CLI:**
 
 ```sh
+# from GitHub
+dsh plugin --profile desktop add github:yhu314/dsh-reader
+
+# or from a local checkout
 dsh plugin --profile desktop add /absolute/path/to/dsh_reader
-dsh --profile desktop            # restart the profile if the bundle is not picked up live
 ```
+
+`dsh --profile desktop` restarts the profile if the bundle is not picked up live.
 
 ## Configure books
 
