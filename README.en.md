@@ -42,6 +42,13 @@ renderer in the existing dropdown, not a replacement.
   `.dsh_reader.json` beside them. No database, no lock-in, git-friendly.
 - **Send to chat.** One click copies a prompt naming the annotation file and the chapter, using
   project-relative paths for `pathBase`.
+- **In-book search.** The toolbar's magnifier searches the whole book server-side in one request;
+  results show the chapter and a context snippet, and clicking one jumps to the paragraph and
+  flashes it.
+- **Images and tables.** Local images load through DSH's authenticated `/api/file` route (relative
+  paths resolve next to the chapter), and tables render as real HTML tables.
+- **Per-book reading width.** The width button cycles 620 / 760 / 920 px and stores the choice per
+  book.
 - **An agent tool.** The Host registers `reader_annotations`, so the agent can list a chapter's
   annotations (or only the open ones), and mark them resolved after revising — no copy-paste
   round trip. The tool and the viewer share one store.
@@ -162,14 +169,14 @@ document viewer plus one bookshelf page. See [`docs/API.md`](docs/API.md) for th
 - One paragraph is the annotation anchor unit: a selection spanning paragraphs is recorded but may
   not be highlighted; annotations whose quoted text disappears are kept but stop matching.
 - Markdown support is prose-oriented: headings, paragraphs, scene breaks, quotes, lists, fenced
-  code, emphasis, code spans, links. Images and tables render as text.
+  code, emphasis, code spans, links, images and tables; no embedded HTML or footnotes.
 - No full-text search, no editing of chapter files from the reader, no live reload when a chapter
   changes on disk (reload the preview or switch chapters).
 - If the reader cannot render, an error boundary shows the message instead of blanking the tab.
 
 ## Roadmap
 
-- Images/tables, in-book search, per-book reading width, split panes.
+- Split view: the right Sidebar already supports two panes, each with its own preview tab.
 - Optional "open markdown as Book by default" (raise the viewer's priority band).
 
 ## Development

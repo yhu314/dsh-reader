@@ -54,6 +54,14 @@ window.__ModuleLoader__.load({
       unsupported: '这个标签页没有可读的地址',
       viewerBook: '电子书',
       annotationGone: '没找到这条批注在正文里的位置（文本可能改过了）',
+      search: '搜索',
+      searchPlaceholder: '在本书里搜索…',
+      searchGo: '搜',
+      searching: '搜索中…',
+      noResults: '没有找到匹配的章节',
+      searchTruncated: '结果太多，只显示了前一部分',
+      width: '阅读宽度',
+      searchJump: '跳到这一段',
       notThisSession: '阅读器未在这个会话启用',
       notThisSessionBody:
         '插件里配置了 sessions 白名单，当前会话不在名单内。刷新页面即可恢复内置预览；要在这里启用，把会话 id 加进 sessions。',
@@ -101,6 +109,14 @@ window.__ModuleLoader__.load({
       unsupported: 'This tab has no readable address',
       viewerBook: 'Book',
       annotationGone: 'The annotated text is no longer in this chapter.',
+      search: 'Search',
+      searchPlaceholder: 'Search this book…',
+      searchGo: 'Go',
+      searching: 'Searching…',
+      noResults: 'No matching chapters',
+      searchTruncated: 'Too many results; showing the first ones',
+      width: 'Reading width',
+      searchJump: 'Jump to this paragraph',
       notThisSession: 'Reader is not enabled in this session',
       notThisSessionBody:
         'The plugin has a `sessions` allowlist and this session is not on it. Reload the page to get the built-in preview back; add this session id to `sessions` to use the reader here.',
@@ -124,6 +140,21 @@ window.__ModuleLoader__.load({
     // ── styles ────────────────────────────────────────────────────────────
     const CSS_TAG = 'dsh_reader/reader.css'
     const css = `
+\.dsr-tableWrap{overflow-x:auto;margin:0 0 .9em}
+.dsr-table{border-collapse:collapse;width:100%;font-size:.9em}
+.dsr-table th,.dsr-table td{border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));padding:6px 8px;text-align:left;vertical-align:top}
+.dsr-table th{background:var(--dsw-alias-bg-layer-2,#23252b);font-weight:600}
+.dsr-img{max-width:100%;height:auto}
+.dsr-imgBlock{display:block;margin:0 auto .9em;border-radius:8px}
+.dsr-blockFlash{animation:dsrBlockFlash 1.4s ease-out}
+@keyframes dsrBlockFlash{0%{background:rgba(77,107,254,.28);box-shadow:0 0 0 3px rgba(77,107,254,.35);border-radius:4px}100%{background:transparent}}
+.dsr-searchRow{display:flex;gap:5px;padding:2px 2px 8px}
+.dsr-searchInput{flex:1;min-width:0}
+.dsr-resultRow{padding:7px 8px;border-radius:8px;cursor:pointer;margin-bottom:4px;background:var(--dsw-alias-bg-layer-2,rgba(255,255,255,.04))}
+.dsr-resultRow:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08))}
+.dsr-resultTop{display:flex;align-items:center;gap:6px}
+.dsr-resultTitle{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--dsw-alias-label-primary,#e8e9ee)}
+.dsr-resultSnippet{margin-top:3px;font-size:11px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#7b8090);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .dsr-root{position:relative;height:100%;min-height:240px;display:flex;flex-direction:column;color:var(--dsw-alias-label-primary,#e8e9ee);font-size:13px;line-height:1.5;overflow:hidden}
 .dsr-bar{flex:none;display:flex;align-items:center;gap:2px;height:34px;padding:0 4px 0 6px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08))}
 .dsr-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#a9adba);padding:0 4px}
@@ -353,7 +384,16 @@ window.__ModuleLoader__.load({
         flushQuote()
         flushList()
       }
-      for (const raw of lines) {
+      const tableCells = (row) =>
+        row
+          .trim()
+          .replace(/^\|/, '')
+          .replace(/\|$/, '')
+          .split('|')
+          .map((cell) => cell.trim())
+
+      for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+        const raw = lines[lineIndex]
         if (code !== null) {
           if (/^```/.test(raw.trim())) {
             blocks.push({ kind: 'pre', text: code.join('\n') })
@@ -381,6 +421,28 @@ window.__ModuleLoader__.load({
           flushAll()
           blocks.push({ kind: 'hr', text: '' })
           continue
+        }
+        const standaloneImage = line.trim().match(/^!\[([^\]]*)\]\(([^)\s]+)\)$/)
+        if (standaloneImage) {
+          flushAll()
+          blocks.push({ kind: 'img', alt: standaloneImage[1], src: standaloneImage[2] })
+          continue
+        }
+        if (line.trim().startsWith('|')) {
+          const separator = (lines[lineIndex + 1] || '').trim()
+          if (separator.startsWith('|') && /^\|?[\s:|-]+\|?$/.test(separator) && separator.includes('-')) {
+            flushAll()
+            const header = tableCells(line.trim())
+            const rows = []
+            let next = lineIndex + 2
+            while (next < lines.length && lines[next].trim().startsWith('|')) {
+              rows.push(tableCells(lines[next].trim()))
+              next += 1
+            }
+            blocks.push({ kind: 'table', header, rows })
+            lineIndex = next - 1
+            continue
+          }
         }
         const quoted = line.match(/^>\s?(.*)$/)
         if (quoted) {
@@ -413,7 +475,8 @@ window.__ModuleLoader__.load({
       if (code !== null) blocks.push({ kind: 'pre', text: code.join('\n') })
       return blocks
     }
-    function inlineNodes(value, keyPrefix) {
+
+    function inlineTextNodes(value, keyPrefix) {
       const text = typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value)
       const pattern = /(\*\*|__)(.+?)\1|(\*|_)(.+?)\3|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|~~(.+?)~~/g
       const nodes = []
@@ -434,6 +497,24 @@ window.__ModuleLoader__.load({
       if (text.slice(last)) nodes.push(text.slice(last))
       return nodes
     }
+    function inlineNodes(value, keyPrefix, resolveImage) {
+      const text = typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value)
+      const pattern = /!\[([^\]]*)\]\(([^)\s]+)\)/g
+      const nodes = []
+      let last = 0
+      let match
+      let index = 0
+      while ((match = pattern.exec(text)) !== null) {
+        if (match.index > last) nodes.push(...inlineTextNodes(text.slice(last, match.index), keyPrefix + '-t' + index))
+        const src = resolveImage ? resolveImage(match[2]) : match[2]
+        nodes.push(h('img', { key: keyPrefix + '-img' + index, className: 'dsr-img', src, alt: match[1] || '' }))
+        last = pattern.lastIndex
+        index += 1
+      }
+      if (last < text.length) nodes.push(...inlineTextNodes(text.slice(last), keyPrefix + '-t' + index))
+      return nodes
+    }
+
     function computeSegments(value, items) {
       const text = typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value)
       const ranges = []
@@ -472,9 +553,37 @@ window.__ModuleLoader__.load({
       return fill(tr(t, 'blockAt'), { n: blockNumber })
     }
 
+    // ── image URLs: local images go through the authenticated /api/file route ──
+    function normalizePosix(value) {
+      const parts = []
+      for (const segment of String(value).split('/')) {
+        if (segment === '' || segment === '.') continue
+        if (segment === '..') parts.pop()
+        else parts.push(segment)
+      }
+      return '/' + parts.join('/')
+    }
+
+    function imageUrlFor(chapterPath, src, pathBase) {
+      const raw = String(src || '').trim()
+      if (raw === '') return ''
+      if (/^(https?:|data:)/i.test(raw)) return raw
+      if (raw.startsWith('/')) return '/api/file?path=' + encodeURIComponent(raw)
+      const base =
+        chapterPath && String(chapterPath).startsWith('/')
+          ? String(chapterPath)
+          : pathBase && chapterPath
+            ? String(pathBase).replace(/\/+$/, '') + '/' + String(chapterPath)
+            : ''
+      if (!base) return raw
+      const directory = base.slice(0, base.lastIndexOf('/'))
+      return '/api/file?path=' + encodeURIComponent(normalizePosix(directory + '/' + raw))
+    }
+
     // ── persisted UI state ────────────────────────────────────────────────
     const UI_KEY = 'dsh_reader.ui.v1'
     const PROGRESS_KEY = 'dsh_reader.pos.v1'
+    const WIDTH_KEY = 'dsh_reader.width.v1'
     function readJson(key, fallback) {
       try {
         const raw = window.localStorage.getItem(key)
@@ -519,6 +628,17 @@ window.__ModuleLoader__.load({
       const s = size || 13
       return h('svg', { width: s, height: s, viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': true },
         h('path', { d: 'M3 4.2h10M3 8h10M3 11.8h6.5', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round' }))
+    }
+    function IconSearch({ size }) {
+      const s = size || 13
+      return h('svg', { width: s, height: s, viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': true },
+        h('circle', { cx: 7, cy: 7, r: 4.2, stroke: 'currentColor', strokeWidth: 1.5 }),
+        h('path', { d: 'M10.2 10.2l3 3', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round' }))
+    }
+    function IconWidth({ size }) {
+      const s = size || 13
+      return h('svg', { width: s, height: s, viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': true },
+        h('path', { d: 'M2 8h12M4.2 5.8L2 8l2.2 2.2M11.8 5.8L14 8l-2.2 2.2', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round', strokeLinejoin: 'round' }))
     }
 
     // ── left-Sidebar entry → bookshelf page in the right Sidebar ──────────
@@ -710,6 +830,7 @@ window.__ModuleLoader__.load({
     // ── reader (shared by file tabs and the bookshelf) ────────────────────
     function Reader({ t, book, config, onBack, backLabel }) {
       const chaptersMeta = book.chapters || []
+      const bookKey = book.mode === 'library' ? 'lib:' + book.libraryId : 'root:' + (book.bookRoot || '')
       const [loaded, setLoaded] = useState({})
       const [active, setActive] = useState(book.index || 0)
       const [tocOpen, setTocOpen] = useState(false)
@@ -719,6 +840,14 @@ window.__ModuleLoader__.load({
       const [menu, setMenu] = useState(null)
       const [toast, setToast] = useState(null)
       const [fontSize, setFontSize] = useState(() => readJson(UI_KEY, {}).fontSize || 16)
+      const [width, setWidth] = useState(() => {
+        const saved = readJson(WIDTH_KEY, {})
+        return Number.isFinite(saved[bookKey]) ? saved[bookKey] : 760
+      })
+      const [searchOpen, setSearchOpen] = useState(false)
+      const [searchQuery, setSearchQuery] = useState('')
+      const [searchState, setSearchState] = useState({ status: 'idle', matches: [], truncated: false, query: '' })
+      const searchInputRef = useRef(null)
       const [error, setError] = useState('')
 
       const scrollRef = useRef(null)
@@ -746,6 +875,14 @@ window.__ModuleLoader__.load({
         const saved = readJson(UI_KEY, {})
         writeJson(UI_KEY, { ...saved, fontSize })
       }, [fontSize])
+      useEffect(() => {
+        const saved = readJson(WIDTH_KEY, {})
+        if (saved[bookKey] === width) return
+        writeJson(WIDTH_KEY, { ...saved, [bookKey]: width })
+      }, [width, bookKey])
+      useEffect(() => {
+        if (searchOpen && searchInputRef.current) searchInputRef.current.focus()
+      }, [searchOpen])
 
       const load = useCallback(
         async (index) => {
@@ -770,6 +907,7 @@ window.__ModuleLoader__.load({
               index,
               id: meta.id,
               title: chapterData.title || meta.title,
+              chapterPath: meta.chapterPath || meta.id,
               text: chapterData.text || '',
               annotationPath: annotationData.annotationPath || meta.annotationPath || '',
               comments: Array.isArray(annotationData.comments) ? annotationData.comments : [],
@@ -783,7 +921,6 @@ window.__ModuleLoader__.load({
         [book.mode, book.libraryId, book.annotationEnabled, chaptersMeta],
       )
 
-      const bookKey = book.mode === 'library' ? 'lib:' + book.libraryId : 'root:' + (book.bookRoot || '')
       useEffect(() => {
         let cancelled = false
         const saved = readJson(PROGRESS_KEY, {})
@@ -876,6 +1013,71 @@ window.__ModuleLoader__.load({
         [chaptersMeta.length, load, showToast],
       )
 
+      const runSearch = useCallback(async (text) => {
+        const query = String(text || '').trim()
+        if (query === '') {
+          setSearchState({ status: 'idle', matches: [], truncated: false, query: '' })
+          return
+        }
+        setSearchState({ status: 'searching', matches: [], truncated: false, query })
+        try {
+          let url
+          if (book.mode === 'library') {
+            url = '/search?lib=' + enc(book.libraryId) + '&q=' + enc(query)
+          } else {
+            const chapter = chaptersMeta[activeRef.current] || {}
+            const path = chapter.chapterPath || ''
+            if (!path || !String(path).startsWith('/')) throw new Error('search is unavailable for this book')
+            url = '/search?path=' + enc(path) + '&q=' + enc(query)
+          }
+          const data = await callApi(url)
+          setSearchState({ status: 'ready', matches: data.matches || [], truncated: data.truncated === true, query })
+        } catch (caught) {
+          setSearchState({ status: 'error', matches: [], truncated: false, query, error: String(caught && caught.message ? caught.message : caught) })
+        }
+      }, [book.mode, book.libraryId, chaptersMeta])
+
+      const jumpToSearchMatch = useCallback(async (match) => {
+        const index = chaptersMeta.findIndex((chapter) => chapter.id === match.chapterId)
+        if (index < 0) return
+        const needle = String(searchState.query || '').toLocaleLowerCase()
+        const reveal = () => {
+          const root = scrollRef.current
+          if (!root) return
+          const sections = root.querySelectorAll('[data-chapter-id]')
+          let section = null
+          for (const candidate of sections) {
+            if (candidate.getAttribute('data-chapter-id') === match.chapterId) {
+              section = candidate
+              break
+            }
+          }
+          if (!section) return
+          const blocks = Array.from(section.querySelectorAll('[data-block]'))
+          let target = null
+          for (const element of blocks) {
+            const text = element.textContent.toLocaleLowerCase()
+            if (needle === '' || text.includes(needle)) {
+              target = element
+              break
+            }
+          }
+          if (!target) return
+          try {
+            target.scrollIntoView({ block: 'center', behavior: 'smooth' })
+          } catch {
+            const rootRect = root.getBoundingClientRect()
+            const blockRect = target.getBoundingClientRect()
+            root.scrollTop += blockRect.top - rootRect.top - rootRect.height / 2
+          }
+          target.classList.add('dsr-blockFlash')
+          window.setTimeout(() => target.classList.remove('dsr-blockFlash'), 1400)
+          setSearchOpen(false)
+        }
+        await jumpTo(index)
+        window.setTimeout(reveal, 160)
+      }, [chaptersMeta, jumpTo, searchState.query])
+
       useEffect(() => {
         const onKeyDown = (event) => {
           if (event.key !== 'Escape') return
@@ -888,15 +1090,16 @@ window.__ModuleLoader__.load({
           } else if (menu) {
             setMenu(null)
             event.stopPropagation()
-          } else if (tocOpen || annOpen) {
+          } else if (tocOpen || annOpen || searchOpen) {
             setTocOpen(false)
             setAnnOpen(false)
+            setSearchOpen(false)
             event.stopPropagation()
           }
         }
         window.addEventListener('keydown', onKeyDown, true)
         return () => window.removeEventListener('keydown', onKeyDown, true)
-      }, [tocOpen, annOpen, menu])
+      }, [tocOpen, annOpen, searchOpen, menu])
 
       const activeChapter = loaded[active] || (loadedIndexes.length > 0 ? loaded[loadedIndexes[0]] : null)
       const activeIndex = activeChapter ? activeChapter.index : active
@@ -1133,11 +1336,13 @@ window.__ModuleLoader__.load({
           book.annotationEnabled
             ? h('button', { type: 'button', className: 'dsr-btn' + (annOpen ? ' dsr-btnOn' : ''), title: tr(t, 'annotations'), 'aria-label': tr(t, 'annotations'), onClick: () => { setAnnOpen((value) => !value); setTocOpen(false) } }, h(IconNote), unresolved > 0 ? String(unresolved) : '')
             : null,
+          h('button', { type: 'button', className: 'dsr-btn' + (searchOpen ? ' dsr-btnOn' : ''), title: tr(t, 'search'), 'aria-label': tr(t, 'search'), onClick: () => { setSearchOpen((value) => !value); setTocOpen(false); setAnnOpen(false) } }, h(IconSearch)),
+          h('button', { type: 'button', className: 'dsr-btn', title: tr(t, 'width') + ': ' + width + 'px', 'aria-label': tr(t, 'width'), onClick: () => setWidth((value) => (value >= 920 ? 620 : value >= 760 ? 920 : 760)) }, h(IconWidth)),
           h('button', { type: 'button', className: 'dsr-btn', title: tr(t, 'sendToChat'), 'aria-label': tr(t, 'sendToChat'), onClick: copyPrompt }, '→'),
           h('button', { type: 'button', className: 'dsr-btn', title: tr(t, 'fontSmaller'), 'aria-label': tr(t, 'fontSmaller'), onClick: () => setFontSize((value) => Math.max(13, value - 1)) }, 'A−'),
           h('button', { type: 'button', className: 'dsr-btn', title: tr(t, 'fontLarger'), 'aria-label': tr(t, 'fontLarger'), onClick: () => setFontSize((value) => Math.min(30, value + 1)) }, 'A+')),
         h('div', { className: 'dsr-scroll', ref: scrollRef, onMouseUp: onMouseUp, onContextMenu: onContextMenu, style: { '--dsr-fs': fontSize + 'px' } },
-          h('div', { className: 'dsr-doc' },
+          h('div', { className: 'dsr-doc', style: { maxWidth: width + 'px' } },
             loadedIndexes.map((index) => {
               const chapter = loaded[index]
               if (!chapter) return null
@@ -1146,6 +1351,7 @@ window.__ModuleLoader__.load({
                 t,
                 chapter,
                 index,
+                pathBase: config && config.pathBase,
                 onMarkClick: (commentId, rect) => openFormForMark(chapter, commentId, rect),
               })
             }),
@@ -1198,6 +1404,43 @@ window.__ModuleLoader__.load({
                       h('span', { className: 'dsr-pathText', title: activeChapter.annotationPath }, activeChapter.annotationPath),
                       h('button', { type: 'button', className: 'dsr-btn', onClick: copyPath }, tr(t, 'copyPath')))
                   : null))
+          : null,
+        searchOpen
+          ? h('div', { className: 'dsr-drawer' },
+              h('div', { className: 'dsr-drawerHead' },
+                h('span', null, tr(t, 'search')),
+                h('span', { style: { flex: 1 } }),
+                h('button', { type: 'button', className: 'dsr-btn', onClick: () => setSearchOpen(false), title: tr(t, 'close') }, h(IconClose))),
+              h('div', { className: 'dsr-drawerBody' },
+                h('div', { className: 'dsr-searchRow' },
+                  h('input', {
+                    ref: searchInputRef,
+                    className: 'dsr-input dsr-searchInput',
+                    value: searchQuery,
+                    placeholder: tr(t, 'searchPlaceholder'),
+                    onChange: (event) => setSearchQuery(event.target.value),
+                    onKeyDown: (event) => {
+                      if (event.key === 'Enter') runSearch(searchQuery)
+                    },
+                  }),
+                  h('button', { type: 'button', className: 'dsr-btn', onClick: () => runSearch(searchQuery) }, tr(t, 'searchGo'))),
+                searchState.status === 'searching' ? h('div', { className: 'dsr-empty' }, tr(t, 'searching')) : null,
+                searchState.status === 'error' ? h('div', { className: 'dsr-empty' }, searchState.error) : null,
+                searchState.status === 'ready' && searchState.matches.length === 0 ? h('div', { className: 'dsr-empty' }, tr(t, 'noResults')) : null,
+                searchState.status === 'ready'
+                  ? searchState.matches.map((match) =>
+                      h('div', {
+                        key: match.chapterId,
+                        className: 'dsr-resultRow',
+                        title: tr(t, 'searchJump'),
+                        onClick: () => jumpToSearchMatch(match),
+                      },
+                        h('div', { className: 'dsr-resultTop' },
+                          h('span', { className: 'dsr-resultTitle' }, match.title || match.chapterId),
+                          h('span', { className: 'dsr-bookMeta' }, String(match.count))),
+                        match.snippet ? h('div', { className: 'dsr-resultSnippet' }, match.snippet) : null))
+                  : null,
+                searchState.truncated ? h('div', { className: 'dsr-hint' }, tr(t, 'searchTruncated')) : null))
           : null,
         selection
           ? h('div', {
@@ -1270,13 +1513,14 @@ window.__ModuleLoader__.load({
     }
 
     // ── one chapter: heading + blocks + annotation highlights ─────────────
-    function ChapterView({ t, chapter, index, onMarkClick }) {
+    function ChapterView({ t, chapter, index, onMarkClick, pathBase }) {
       const blocks = useMemo(() => {
         const parsed = splitBlocks(chapter.text)
         if (parsed.length > 0 && parsed[0].kind === 'h1') parsed.shift()
         return parsed
       }, [chapter.text])
       const comments = chapter.comments || []
+      const resolveImage = (src) => imageUrlFor(chapter.chapterPath, src, pathBase)
 
       // Renders one block of text with annotation highlights. `items` are the
       // comments anchored to this paragraph number (1-based).
@@ -1284,7 +1528,7 @@ window.__ModuleLoader__.load({
         const segments = items.length > 0 ? computeSegments(text, items) : [{ text }]
         return segments.map((segment, segmentIndex) => {
           if (segment.id === undefined) {
-            return h(React.Fragment, { key: segmentIndex }, inlineNodes(segment.text, keyPrefix + 's' + segmentIndex))
+            return h(React.Fragment, { key: segmentIndex }, inlineNodes(segment.text, keyPrefix + 's' + segmentIndex, resolveImage))
           }
           const comment = items.find((item) => item.id === segment.id)
           return h('mark', {
@@ -1297,7 +1541,7 @@ window.__ModuleLoader__.load({
               const rect = event.currentTarget.getBoundingClientRect()
               onMarkClick(segment.id, { left: rect.left, top: rect.top, bottom: rect.bottom })
             },
-          }, inlineNodes(segment.text, keyPrefix + 'm' + segmentIndex))
+          }, inlineNodes(segment.text, keyPrefix + 'm' + segmentIndex, resolveImage))
         })
       }
 
@@ -1306,6 +1550,36 @@ window.__ModuleLoader__.load({
         const items = comments.filter((comment) => comment.block === blockIndex + 1)
         if (block.kind === 'hr') return h('hr', { className: 'dsr-hr' })
         if (block.kind === 'pre') return h('pre', { className: 'dsr-pre' }, h('code', null, block.text))
+        if (block.kind === 'img') {
+          return h('img', {
+            key: 'img' + blockIndex,
+            className: 'dsr-img dsr-imgBlock',
+            src: resolveImage(block.src),
+            alt: block.alt || '',
+            'data-block': blockIndex,
+            'data-chapter-id': chapter.id,
+            'data-chapter-index': index,
+          })
+        }
+        if (block.kind === 'table') {
+          const header = block.header || []
+          const rows = block.rows || []
+          return h('div', {
+            key: 'table' + blockIndex,
+            className: 'dsr-tableWrap',
+            'data-block': blockIndex,
+            'data-chapter-id': chapter.id,
+            'data-chapter-index': index,
+          },
+            h('table', { className: 'dsr-table' },
+              header.length > 0
+                ? h('thead', null, h('tr', null, header.map((cell, cellIndex) =>
+                    h('th', { key: cellIndex }, inlineNodes(cell, 'th' + blockIndex + '-' + cellIndex, resolveImage)))))
+                : null,
+              h('tbody', null, rows.map((row, rowIndex) =>
+                h('tr', { key: rowIndex }, row.map((cell, cellIndex) =>
+                  h('td', { key: cellIndex }, inlineNodes(cell, 'td' + blockIndex + '-' + rowIndex + '-' + cellIndex, resolveImage))))))))
+        }
         if (block.kind === 'ul' || block.kind === 'ol') {
           const Tag = block.kind === 'ol' ? 'ol' : 'ul'
           return h(Tag, { key: block.kind + blockIndex, className: block.kind === 'ol' ? 'dsr-ol' : 'dsr-ul', 'data-block': blockIndex, 'data-chapter-id': chapter.id, 'data-chapter-index': index },
@@ -1549,6 +1823,8 @@ window.__ModuleLoader__.load({
       stripFrontmatter,
       parseFileAddress,
       // Exposed for harnesses that render the components outside the app.
+      imageUrlFor,
+      normalizePosix,
       BookBody,
       BookBodyInner,
       BookshelfBody,

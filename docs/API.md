@@ -132,6 +132,31 @@ Two forms:
 
 Oversized chapters fail with 400 instead of truncating (`maxChapterBytes`).
 
+## `GET /api/dsh_reader/search`
+
+Case-insensitive substring search over one book. `lib=<id>` scans a configured library;
+`path=<absolute .md>` scans the markdown files next to that file (ad-hoc book).
+
+| Query | Meaning |
+| --- | --- |
+| `q` | required, 1–200 characters |
+| `lib` / `path` | one of them selects the book |
+| `limit` | max chapters returned, default 50, capped at 200 |
+
+```json
+{
+  "query": "赵云",
+  "libraryId": "zhaoyun",
+  "matches": [
+    { "chapterId": "第001章.md", "title": "第一章 常山雪", "snippet": "…赵云在河滩上练枪…", "count": 2 }
+  ],
+  "truncated": false
+}
+```
+
+One match per chapter (its first hit plus the total count). The browser loads the chapter and jumps
+to the block containing the query, so no offsets need to match across implementations.
+
 ## `GET /api/dsh_reader/annotations?lib=<id>&file=<chapter id>`
 
 ```json

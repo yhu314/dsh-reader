@@ -979,3 +979,32 @@ test("reader_annotations lists, filters and resolves stored annotations", async 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+// ── search ─────────────────────────────────────────────────────────────────
+
+test("GET /search finds chapters case-insensitively and reports snippets", async () => {
+  const res = await request(client, query("/api/dsh_reader/search", { lib: "test-book", q: "正文" }));
+  assert.equal(res.status, 200);
+  assert.equal(res.json.query, "正文");
+  assert.ok(res.json.matches.length >= 3);
+  const ids = res.json.matches.map((match) => match.chapterId);
+  assert.ok(ids.includes("第001章.md"));
+  assert.ok(ids.includes("第002章.md"));
+  assert.ok(res.json.matches.every((match) => typeof match.snippet === "string" && match.count >= 1));
+
+  const limited = await request(client, query("/api/dsh_reader/search", { lib: "test-book", q: "正文", limit: "1" }));
+  assert.equal(limited.status, 200);
+  assert.equal(limited.json.matches.length, 1);
+  assert.equal(limited.json.truncated, true);
+
+  const missing = await request(client, "/api/dsh_reader/search?lib=test-book");
+  assert.equal(missing.status, 400);
+});
+
+test("GET /search also works for an ad-hoc book", async () => {
+  const target = join(adhocRoot, "a.md");
+  const res = await request(client, query("/api/dsh_reader/search", { path: target, q: "A" }));
+  assert.equal(res.status, 200);
+  assert.equal(res.json.matches.length, 1);
+  assert.equal(res.json.matches[0].chapterId, "a.md");
+});

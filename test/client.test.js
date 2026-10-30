@@ -48,7 +48,7 @@ test('client module registers with the module loader', () => {
   assert.ok(module.__test)
 })
 
-const { splitBlocks, computeSegments, buildPrompt, inlineNodes, parseFileAddress, BookBody } = captured.factory(requireStub).__test
+const { splitBlocks, computeSegments, buildPrompt, inlineNodes, parseFileAddress, imageUrlFor, BookBody } = captured.factory(requireStub).__test
 
 test('splitBlocks: frontmatter, headings, paragraphs, scene break', () => {
   const blocks = splitBlocks(
@@ -163,4 +163,33 @@ test('inlineNodes / computeSegments tolerate a missing text value', () => {
   assert.deepEqual(inlineNodes(undefined, 'x'), [])
   assert.deepEqual(inlineNodes(null, 'x'), [])
   assert.deepEqual(computeSegments(undefined, []), [])
+})
+
+test('splitBlocks: tables and standalone images', () => {
+  const blocks = splitBlocks(
+    ['| 名字 | 说明 |', '| --- | --- |', '| 赵云 | 主角 |', '', '![示意图](images/map.png)', '', '段落里也有 ![内联](a.png) 图片'].join('\n'),
+  )
+  assert.deepEqual(blocks.map((block) => block.kind), ['table', 'img', 'p'])
+  assert.deepEqual(blocks[0].header, ['名字', '说明'])
+  assert.deepEqual(blocks[0].rows, [['赵云', '主角']])
+  assert.equal(blocks[1].src, 'images/map.png')
+  assert.equal(blocks[1].alt, '示意图')
+})
+
+test('inlineNodes: image placeholder is resolved through the given function', () => {
+  const nodes = inlineNodes('看图 ![图](x.png) 结束', 'k', (src) => 'resolved:' + src)
+  const image = nodes.find((node) => node && node.type === 'img')
+  assert.equal(image.props.src, 'resolved:x.png')
+  assert.equal(image.props.alt, '图')
+})
+
+test('imageUrlFor: local images use the authenticated file route', () => {
+  assert.equal(imageUrlFor('a.md', 'https://x.y/z.png', '/ws'), 'https://x.y/z.png')
+  assert.equal(imageUrlFor('a.md', '/abs/pic.png', '/ws'), '/api/file?path=' + encodeURIComponent('/abs/pic.png'))
+  const relative = imageUrlFor('book/ch1.md', '../img/pic.png', '/ws')
+  assert.ok(relative.startsWith('/api/file?path='))
+  assert.equal(decodeURIComponent(relative.slice('/api/file?path='.length)), '/ws/img/pic.png')
+  // An absolute chapter path (ad-hoc books) resolves next to the file.
+  const adhoc = imageUrlFor('/abs/book/ch1.md', 'pics/a.png', undefined)
+  assert.equal(decodeURIComponent(adhoc.slice('/api/file?path='.length)), '/abs/book/pics/a.png')
 })

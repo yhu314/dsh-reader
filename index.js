@@ -1116,6 +1116,87 @@ async function handleResolve(settings, url) {
   return resolveBook(settings, url.searchParams.get("path"));
 }
 
+/**
+ * `/search`: case-insensitive substring search over the book's chapters.
+ *
+ * Library mode (`?lib=`) scans the configured library; ad-hoc mode (`?path=`)
+ * scans the markdown files next to the given file. Matches carry a short
+ * context snippet; the browser loads the chapter and jumps to the block that
+ * contains the query.
+ */
+async function handleSearch(settings, url) {
+  const query = (url.searchParams.get("q") || "").trim();
+  if (query === "") throw new HttpError(400, "missing q parameter");
+  if (query.length > 200) throw new HttpError(400, "q must be 200 characters or fewer");
+  const rawLimit = Number(url.searchParams.get("limit"));
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(200, Math.trunc(rawLimit)) : 50;
+
+  const libId = url.searchParams.get("lib");
+  const pathParam = url.searchParams.get("path");
+  let entries = [];
+
+  if (libId !== null && libId !== "") {
+    const library = findLibrary(settings, libId);
+    const chapters = await listChapters(library);
+    entries = chapters.map((chapter) => ({
+      id: chapter.id,
+      title: chapter.title,
+      absPath: join(library.root, chapter.id.split("/").join(sep)),
+    }));
+  } else if (pathParam !== null && pathParam !== "") {
+    const { absPath } = await resolveAdhocFile(settings, pathParam, { requireAbsolute: true });
+    const adhoc = await listAdhocChapters(absPath);
+    entries = adhoc.chapters.map((chapter) => ({
+      id: chapter.id,
+      title: chapter.title,
+      absPath: chapter.chapterPath,
+    }));
+  } else {
+    throw new HttpError(400, "missing lib or path parameter");
+  }
+
+  const needle = query.toLocaleLowerCase();
+  const matches = [];
+  let truncated = false;
+  for (const entry of entries) {
+    if (matches.length >= limit) {
+      truncated = true;
+      break;
+    }
+    let text;
+    try {
+      const info = await statOrNull(entry.absPath);
+      if (info === null || !info.isFile() || info.size > settings.maxChapterBytes) continue;
+      text = await readFile(entry.absPath, "utf8");
+    } catch {
+      continue;
+    }
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    const haystack = text.toLocaleLowerCase();
+    const at = haystack.indexOf(needle);
+    if (at < 0) continue;
+    let count = 1;
+    let cursor = at + needle.length;
+    while (true) {
+      const next = haystack.indexOf(needle, cursor);
+      if (next < 0) break;
+      count += 1;
+      cursor = next + needle.length;
+      if (count > 999) break;
+    }
+    const from = Math.max(0, at - 24);
+    const to = Math.min(text.length, at + needle.length + 24);
+    matches.push({
+      chapterId: entry.id,
+      title: entry.title,
+      snippet: text.slice(from, to).replace(/\s+/g, " ").trim(),
+      count,
+    });
+  }
+
+  return { query, libraryId: libId || null, matches, truncated };
+}
+
 /** `/books`: list every readable library, collecting per-library failures. */
 async function handleBooks(settings) {
   const libraries = [];
@@ -1407,6 +1488,10 @@ function createHandler(settings) {
         case "chapter":
           if (method === "POST") throw new HttpError(405, "method not allowed");
           payload = await handleChapter(settings, url);
+          break;
+        case "search":
+          if (method === "POST") throw new HttpError(405, "method not allowed");
+          payload = await handleSearch(settings, url);
           break;
         case "annotations":
           payload =
