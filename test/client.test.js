@@ -180,3 +180,11 @@ test('claimWith: libraries mode only claims files inside a configured root', () 
   assert.equal(claimWith(config, address('s1', 'book/a.md')), true)
   assert.equal(claimWith(config, address('s1', 'other/a.md')), false)
 })
+
+test('inlineNodes / computeSegments tolerate a missing text value', () => {
+  // Regression: list blocks have no `text` field; a missing value must render
+  // as empty instead of throwing "reading 'slice'" inside ChapterView.
+  assert.deepEqual(inlineNodes(undefined, 'x'), [])
+  assert.deepEqual(inlineNodes(null, 'x'), [])
+  assert.deepEqual(computeSegments(undefined, []), [])
+})

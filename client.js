@@ -451,7 +451,8 @@ window.__ModuleLoader__.load({
       if (code !== null) blocks.push({ kind: 'pre', text: code.join('\n') })
       return blocks
     }
-    function inlineNodes(text, keyPrefix) {
+    function inlineNodes(value, keyPrefix) {
+      const text = typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value)
       const pattern = /(\*\*|__)(.+?)\1|(\*|_)(.+?)\3|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|~~(.+?)~~/g
       const nodes = []
       let last = 0
@@ -471,7 +472,8 @@ window.__ModuleLoader__.load({
       if (text.slice(last)) nodes.push(text.slice(last))
       return nodes
     }
-    function computeSegments(text, items) {
+    function computeSegments(value, items) {
+      const text = typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value)
       const ranges = []
       for (const item of items || []) {
         const quote = String(item.quote || '').trim()
@@ -1161,15 +1163,13 @@ window.__ModuleLoader__.load({
       }, [chapter.text])
       const comments = chapter.comments || []
 
-      const renderBlock = (blockIndex) => {
-        const block = blocks[blockIndex]
-        const items = comments.filter((comment) => comment.block === blockIndex + 1)
-        if (block.kind === 'hr') return h('hr', { className: 'dsr-hr' })
-        if (block.kind === 'pre') return h('pre', { className: 'dsr-pre' }, h('code', null, block.text))
-        const segments = items.length > 0 ? computeSegments(block.text, items) : [{ text: block.text }]
-        const nodes = segments.map((segment, segmentIndex) => {
+      // Renders one block of text with annotation highlights. `items` are the
+      // comments anchored to this paragraph number (1-based).
+      const markedNodes = (text, items, keyPrefix) => {
+        const segments = items.length > 0 ? computeSegments(text, items) : [{ text }]
+        return segments.map((segment, segmentIndex) => {
           if (segment.id === undefined) {
-            return h(React.Fragment, { key: segmentIndex }, inlineNodes(segment.text, 's' + segmentIndex))
+            return h(React.Fragment, { key: segmentIndex }, inlineNodes(segment.text, keyPrefix + 's' + segmentIndex))
           }
           const comment = items.find((item) => item.id === segment.id)
           return h('mark', {
@@ -1182,15 +1182,24 @@ window.__ModuleLoader__.load({
               const rect = event.currentTarget.getBoundingClientRect()
               onMarkClick(segment.id, { left: rect.left, top: rect.top, bottom: rect.bottom })
             },
-          }, inlineNodes(segment.text, 'm' + segmentIndex))
+          }, inlineNodes(segment.text, keyPrefix + 'm' + segmentIndex))
         })
-        if (block.kind === 'quote') {
-          return h('blockquote', { key: 'q', className: 'dsr-quote', 'data-block': blockIndex, 'data-chapter-id': chapter.id, 'data-chapter-index': index }, nodes)
-        }
+      }
+
+      const renderBlock = (blockIndex) => {
+        const block = blocks[blockIndex]
+        const items = comments.filter((comment) => comment.block === blockIndex + 1)
+        if (block.kind === 'hr') return h('hr', { className: 'dsr-hr' })
+        if (block.kind === 'pre') return h('pre', { className: 'dsr-pre' }, h('code', null, block.text))
         if (block.kind === 'ul' || block.kind === 'ol') {
           const Tag = block.kind === 'ol' ? 'ol' : 'ul'
           return h(Tag, { key: block.kind + blockIndex, className: block.kind === 'ol' ? 'dsr-ol' : 'dsr-ul', 'data-block': blockIndex, 'data-chapter-id': chapter.id, 'data-chapter-index': index },
-            block.items.map((item, itemIndex) => h('li', { key: itemIndex, className: 'dsr-li' }, inlineNodes(item, 'li' + itemIndex))))
+            (block.items || []).map((item, itemIndex) =>
+              h('li', { key: itemIndex, className: 'dsr-li' }, markedNodes(item, items, 'li' + itemIndex + '-'))))
+        }
+        const nodes = markedNodes(block.text, items, 'b' + blockIndex + '-')
+        if (block.kind === 'quote') {
+          return h('blockquote', { key: 'q', className: 'dsr-quote', 'data-block': blockIndex, 'data-chapter-id': chapter.id, 'data-chapter-index': index }, nodes)
         }
         const tag = block.kind === 'p' ? 'p' : block.kind
         return h(tag, {
@@ -1415,6 +1424,14 @@ window.__ModuleLoader__.load({
       parseFileAddress,
       claimAddress,
       claimWith,
+      // Exposed for harnesses that render the components outside the app.
+      FileTabBody,
+      BookshelfBody,
+      Reader,
+      ChapterView,
+      AnnotationForm,
+      OpenButton,
+      ReaderErrorBoundary,
     }
     return module.exports
   },
