@@ -1302,9 +1302,15 @@ window.__ModuleLoader__.load({
     function ShelfTabBody(props) {
       return h(ReaderErrorBoundary, null, h(BookshelfBody, props))
     }
+    // Tabs saved by the earlier resource-tab design are re-opened as this
+    // compatibility page instead of an unregistered kind.
+    function LegacyTabBody(props) {
+      return h(ReaderErrorBoundary, null, h(BookBody, props))
+    }
 
     // ── plugin body ───────────────────────────────────────────────────────
     const BOOKS_ID = 'dsh_reader/books'
+    const LEGACY_TAB_ID = 'dsh_reader/reader'
     const BOOK_VIEWER_ID = 'dsh_reader/book'
     const inject = ['slots', 'locale', 'documentPreviews', 'sidebarRight', 'sidebarRightTabs']
 
@@ -1351,6 +1357,24 @@ window.__ModuleLoader__.load({
         ctx.slots.register(
           { name: 'sidebar.right.tab.document', key: BOOK_VIEWER_ID, locale: NS },
           BookSlotBody,
+        ))
+
+      // Compatibility: earlier builds opened markdown in a resource tab under
+      // this kind. Registered so a persisted tab still resolves; nothing new is
+      // opened through it, and it never claims a file.
+      ctx.effect(
+        () =>
+          ctx.sidebarRightTabs.register({
+            id: LEGACY_TAB_ID,
+            kind: LEGACY_TAB_ID,
+            title: () => t('viewerBook'),
+          }),
+        'dsh_reader: legacy tab type',
+      )
+      ctx.slots.inject('sidebar.right.pane.tab', () =>
+        ctx.slots.register(
+          { name: 'sidebar.right.pane.tab', key: LEGACY_TAB_ID, locale: NS },
+          LegacyTabBody,
         ))
 
       // Bookshelf page: opened from the left Sidebar; lists libraries and
