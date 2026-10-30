@@ -1096,6 +1096,7 @@ async function handleConfig(settings) {
     pathBase: settings.pathBase,
     annotation: { locale: settings.annotation.locale },
     promptTemplate: settings.promptTemplate,
+    tool: { name: TOOL_NAME, status: toolStatus },
     libraries: settings.libraries.map((library) => ({
       id: library.id,
       title: library.title,
@@ -1545,7 +1546,7 @@ function annotationView(comment) {
     id: comment.id,
     note: comment.note,
     quote: comment.quote,
-    paragraph: Number.isInteger(comment.block) ? comment.block : null,
+    paragraph: Number.isInteger(comment.block) ? comment.block : 0,
     resolved: comment.resolved === true,
   };
 }
@@ -1789,7 +1790,7 @@ export function createAnnotationsTool(settings) {
                 id: { type: "string" },
                 note: { type: "string" },
                 quote: { type: "string" },
-                paragraph: { type: ["integer", "null"] },
+                paragraph: { type: "integer", description: "1-based paragraph number; 0 = whole file" },
                 resolved: { type: "boolean" },
               },
             },
@@ -1827,6 +1828,9 @@ export function createAnnotationsTool(settings) {
 }
 
 // ── plugin entry point ─────────────────────────────────────────────────────
+
+/** Last tool-registration outcome, exposed by /config for diagnostics. */
+let toolStatus = "not-attempted";
 
 
 export const name = "dsh_reader";
@@ -1875,13 +1879,17 @@ export function apply(ctx, config) {
   if (ctx.tools && typeof ctx.tools.register === "function") {
     const registerTool = () => {
       const disposal = ctx.tools.register(createAnnotationsTool(settings));
+      toolStatus = `registered:${typeof disposal}`;
       return typeof disposal === "function" ? disposal : () => undefined;
     };
     try {
       if (typeof ctx.effect === "function") ctx.effect(registerTool, "dsh_reader: annotations tool");
       else registerTool();
     } catch (error) {
+      toolStatus = `error:${error?.message ?? error}`;
       console.warn(`[dsh_reader] failed to register the annotations tool: ${error?.message ?? error}`);
     }
+  } else {
+    toolStatus = `no-tools-service:${typeof ctx.tools}`;
   }
 }

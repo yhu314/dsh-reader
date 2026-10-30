@@ -42,9 +42,9 @@ renderer in the existing dropdown, not a replacement.
   `.dsh_reader.json` beside them. No database, no lock-in, git-friendly.
 - **Send to chat.** One click copies a prompt naming the annotation file and the chapter, using
   project-relative paths for `pathBase`.
-- **In-book search.** The toolbar's magnifier searches the whole book server-side in one request;
-  results show the chapter and a context snippet, and clicking one jumps to the paragraph and
-  flashes it.
+- **In-book search as you type.** The toolbar's magnifier searches the whole book server-side;
+  keystrokes trigger a debounced query (~220 ms) and results refresh live, showing the chapter and a
+  context snippet. Enter searches at once; clicking a result jumps to the paragraph and flashes it.
 - **Images and tables.** Local images load through DSH's authenticated `/api/file` route (relative
   paths resolve next to the chapter), and tables render as real HTML tables.
 - **Per-book reading width.** The width button cycles 620 / 760 / 920 px and stores the choice per

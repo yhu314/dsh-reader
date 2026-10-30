@@ -848,6 +848,9 @@ window.__ModuleLoader__.load({
       const [searchQuery, setSearchQuery] = useState('')
       const [searchState, setSearchState] = useState({ status: 'idle', matches: [], truncated: false, query: '' })
       const searchInputRef = useRef(null)
+      const searchTimerRef = useRef(null)
+      const searchAbortRef = useRef(null)
+      const searchSeqRef = useRef(0)
       const [error, setError] = useState('')
 
       const scrollRef = useRef(null)
@@ -1015,11 +1018,21 @@ window.__ModuleLoader__.load({
 
       const runSearch = useCallback(async (text) => {
         const query = String(text || '').trim()
+        const seq = searchSeqRef.current + 1
+        searchSeqRef.current = seq
+        if (searchAbortRef.current) searchAbortRef.current.abort()
         if (query === '') {
           setSearchState({ status: 'idle', matches: [], truncated: false, query: '' })
           return
         }
-        setSearchState({ status: 'searching', matches: [], truncated: false, query })
+        setSearchState((previous) => ({
+          status: 'searching',
+          matches: previous.matches || [],
+          truncated: previous.truncated === true,
+          query,
+        }))
+        const controller = new window.AbortController()
+        searchAbortRef.current = controller
         try {
           let url
           if (book.mode === 'library') {
@@ -1030,12 +1043,40 @@ window.__ModuleLoader__.load({
             if (!path || !String(path).startsWith('/')) throw new Error('search is unavailable for this book')
             url = '/search?path=' + enc(path) + '&q=' + enc(query)
           }
-          const data = await callApi(url)
+          const data = await callApi(url, { signal: controller.signal })
+          if (searchSeqRef.current !== seq) return
           setSearchState({ status: 'ready', matches: data.matches || [], truncated: data.truncated === true, query })
         } catch (caught) {
+          if (searchSeqRef.current !== seq) return
+          const aborted = caught && (caught.name === 'AbortError' || /abort/i.test(String(caught.message || caught)))
+          if (aborted) return
           setSearchState({ status: 'error', matches: [], truncated: false, query, error: String(caught && caught.message ? caught.message : caught) })
         }
       }, [book.mode, book.libraryId, chaptersMeta])
+
+      // Type-to-search: debounce while the user types; Enter/Go still run at once.
+      const onSearchInput = useCallback((value) => {
+        setSearchQuery(value)
+        if (searchTimerRef.current) window.clearTimeout(searchTimerRef.current)
+        const query = String(value || '').trim()
+        if (query === '') {
+          searchSeqRef.current += 1
+          if (searchAbortRef.current) searchAbortRef.current.abort()
+          setSearchState({ status: 'idle', matches: [], truncated: false, query: '' })
+          return
+        }
+        searchTimerRef.current = window.setTimeout(() => runSearch(query), 220)
+      }, [runSearch])
+
+      useEffect(() => () => {
+        if (searchTimerRef.current) window.clearTimeout(searchTimerRef.current)
+        if (searchAbortRef.current) searchAbortRef.current.abort()
+      }, [])
+      useEffect(() => {
+        if (searchOpen) return
+        if (searchTimerRef.current) window.clearTimeout(searchTimerRef.current)
+        if (searchAbortRef.current) searchAbortRef.current.abort()
+      }, [searchOpen])
 
       const jumpToSearchMatch = useCallback(async (match) => {
         const index = chaptersMeta.findIndex((chapter) => chapter.id === match.chapterId)
@@ -1418,13 +1459,22 @@ window.__ModuleLoader__.load({
                     className: 'dsr-input dsr-searchInput',
                     value: searchQuery,
                     placeholder: tr(t, 'searchPlaceholder'),
-                    onChange: (event) => setSearchQuery(event.target.value),
+                    onChange: (event) => onSearchInput(event.target.value),
                     onKeyDown: (event) => {
-                      if (event.key === 'Enter') runSearch(searchQuery)
+                      if (event.key !== 'Enter') return
+                      if (searchTimerRef.current) window.clearTimeout(searchTimerRef.current)
+                      runSearch(searchQuery)
                     },
                   }),
-                  h('button', { type: 'button', className: 'dsr-btn', onClick: () => runSearch(searchQuery) }, tr(t, 'searchGo'))),
-                searchState.status === 'searching' ? h('div', { className: 'dsr-empty' }, tr(t, 'searching')) : null,
+                  h('button', {
+                    type: 'button',
+                    className: 'dsr-btn',
+                    onClick: () => {
+                      if (searchTimerRef.current) window.clearTimeout(searchTimerRef.current)
+                      runSearch(searchQuery)
+                    },
+                  }, tr(t, 'searchGo'))),
+                searchState.status === 'searching' ? h('div', { className: 'dsr-hint' }, tr(t, 'searching')) : null,
                 searchState.status === 'error' ? h('div', { className: 'dsr-empty' }, searchState.error) : null,
                 searchState.status === 'ready' && searchState.matches.length === 0 ? h('div', { className: 'dsr-empty' }, tr(t, 'noResults')) : null,
                 searchState.status === 'ready'
