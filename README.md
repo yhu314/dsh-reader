@@ -53,7 +53,7 @@ The plugin is a plain DSH bundle. Pick one:
 
 1. Open **Plugins** in the DSH sidebar.
 2. **Add plugin** → paste the **absolute path** of this directory (or
-   `github:yhu314/dsh_reader` once published).
+   `github:yhu314/dsh-reader` once published).
 3. **Enable now**, then reload the page.
 
 **From the CLI:**

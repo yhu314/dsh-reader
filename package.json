@@ -50,10 +50,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yhu314/dsh_reader.git"
+    "url": "git+https://github.com/yhu314/dsh-reader.git"
   },
-  "homepage": "https://github.com/yhu314/dsh_reader",
+  "homepage": "https://github.com/yhu314/dsh-reader",
   "bugs": {
-    "url": "https://github.com/yhu314/dsh_reader/issues"
+    "url": "https://github.com/yhu314/dsh-reader/issues"
   }
 }
