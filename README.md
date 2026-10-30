@@ -38,9 +38,8 @@ renderer in the existing dropdown, not a replacement.
   `.dsh_reader.json` beside them. No database, no lock-in, git-friendly.
 - **Send to chat.** One click copies a prompt naming the annotation file and the chapter, using
   project-relative paths for `pathBase`.
-- **Generic and neutral.** Any folder of `.md` files is a book. Types and conclusions are
-  configurable; the defaults are neutral (`note/question/fix/idea`, `accept/reject/defer`), and the
-  default markdown export locale is `zh` because DSH's UI language is.
+- **Generic.** Any folder of `.md` files is a book; the generated markdown export language is
+  configurable (`zh` by default because DSH's UI language is).
 - **Theme-native, dependency-free.** Plain browser JavaScript, no bundler, no npm dependencies; the
   UI uses DSH's theme tokens and follows light/dark.
 
