@@ -1,0 +1,20 @@
+# Example: a Chinese novel kept as one markdown file per chapter.
+#
+# Append this to your profile patch layer, i.e.
+#   ~/.dsh/profiles/<profile>/cordis.patch.yml
+# and replace the paths with your own. The profile patch must stay a top-level
+# YAML array, so paste the block as-is (no extra wrapper key).
+- id: dsh-reader
+  name: dsh-reader
+  config:
+    libraries:
+      - id: my-novel
+        title: 我的小说
+        root: '/absolute/path/to/我的小说/04_正文'
+        annotationDir: '/absolute/path/to/我的小说/06_批注'
+    annotation:
+      types: [事实, 逻辑, 文风, 结构, 删减, 疑问]
+      conclusions: [采纳, 驳回, 转细纲, 暂缓]
+      locale: zh
+    pathBase: '/absolute/path/to/我的小说'
+    promptTemplate: '请按 {annotationFile} 中的批注修改 {chapterFile}。逐条处理，并回报每条批注的结论。'

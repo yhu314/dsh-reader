@@ -1,0 +1,17 @@
+# Example: a documentation folder read as one continuous book, English export.
+- id: dsh-reader
+  name: dsh-reader
+  config:
+    libraries:
+      - id: handbook
+        title: Handbook
+        root: '/absolute/path/to/handbook/docs'
+        annotationDir: '/absolute/path/to/handbook/annotations'
+        recursive: true
+        exclude: ['^drafts/']
+    annotation:
+      types: [note, question, fix, idea]
+      conclusions: [accept, reject, defer]
+      locale: en
+    pathBase: '/absolute/path/to/handbook'
+    promptTemplate: 'Revise {chapterFile} according to the annotations in {annotationFile}. Handle every item and report the outcome for each.'

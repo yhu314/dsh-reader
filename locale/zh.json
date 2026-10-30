@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "阅读器",
+    "description": "把一整个 markdown 文件夹当作一本书连续阅读，支持选中文字写批注，并可一键交给 agent 修改。"
+  }
+}

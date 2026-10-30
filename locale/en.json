@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Reader",
+    "description": "Reads a folder of markdown files as one continuous book, with inline annotations you can hand to the agent."
+  }
+}
