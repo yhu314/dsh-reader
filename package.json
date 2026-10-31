@@ -14,6 +14,7 @@
     "README.en.md",
     "index.js",
     "client.js",
+    "vendor/highlight.min.js",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",

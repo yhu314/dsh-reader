@@ -47,6 +47,8 @@ and switch the viewer to **Book** to read and annotate.
   the paragraph and flashes it.
 - **Images and tables.** Local images load through DSH's authenticated `/api/file` route (relative
   paths resolve next to the chapter), and tables render as real HTML tables.
+- **Code blocks and syntax highlighting.** Fenced code blocks (```lang … ```) are syntax-highlighted
+  with a language label and a copy button; task lists (`- [ ]` / `- [x]`) render as checkboxes.
 - **Per-book reading width.** The width button cycles 620 / 760 / 920 px and stores the choice per
   book.
 - **In-book links.** A markdown link to another file in the **same directory** jumps inside the book
@@ -167,8 +169,9 @@ loopback interface, and owns the annotation store. The browser half is a documen
 
 - One paragraph is the annotation anchor unit: a selection spanning paragraphs is recorded but may
   not be highlighted; annotations whose quoted text disappears are kept but stop matching.
-- Markdown support is prose-oriented: headings, paragraphs, scene breaks, quotes, lists, fenced code,
-  emphasis, code spans, links, images and tables; no embedded HTML or footnotes.
+- Markdown support is prose-oriented: headings, paragraphs, scene breaks, quotes, lists (including
+  task lists), fenced code blocks (with syntax highlighting), emphasis, code spans, links, images and
+  tables; no embedded HTML or footnotes.
 - No editing of chapter files from the reader, and no live reload when a chapter changes on disk
   (reload the preview or switch chapters).
 - If the reader cannot render, an error boundary shows the message instead of blanking the tab.

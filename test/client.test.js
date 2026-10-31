@@ -71,9 +71,27 @@ test('splitBlocks: quote, lists, fenced code', () => {
     ['quote', 'ul', 'ol', 'pre'],
   )
   assert.equal(blocks[0].text, '引用一行\n引用两行')
-  assert.deepEqual(blocks[1].items, ['甲', '乙'])
-  assert.deepEqual(blocks[2].items, ['一', '二'])
+  assert.deepEqual(blocks[1].items, [{ text: '甲' }, { text: '乙' }])
+  assert.deepEqual(blocks[2].items, [{ text: '一' }, { text: '二' }])
   assert.equal(blocks[3].text, 'code()')
+  assert.equal(blocks[3].lang, '')
+})
+
+test('splitBlocks: code fence language and task lists', () => {
+  const blocks = splitBlocks(
+    ['```javascript', 'const x = 1', '```', '', '- [ ] 待办', '- [x] 已完成', '', '~~~python', 'print(1)', '~~~'].join('\n'),
+  )
+  assert.equal(blocks[0].kind, 'pre')
+  assert.equal(blocks[0].lang, 'javascript')
+  assert.equal(blocks[0].text, 'const x = 1')
+  assert.equal(blocks[1].kind, 'ul')
+  assert.deepEqual(blocks[1].items, [
+    { text: '待办', checked: false },
+    { text: '已完成', checked: true },
+  ])
+  assert.equal(blocks[2].kind, 'pre')
+  assert.equal(blocks[2].lang, 'python')
+  assert.equal(blocks[2].text, 'print(1)')
 })
 
 test('splitBlocks: Latin soft breaks keep a space', () => {
