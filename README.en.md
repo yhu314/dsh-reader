@@ -35,6 +35,9 @@ and switch the viewer to **Book** to read and annotate.
   right-click a highlight to edit or delete it. The drawer lists them and jumps back to the passage.
   No type and no conclusion to pick — the note is the whole annotation. Annotations work on any
   folder you open; no configured library is required.
+- **Threaded replies.** Every annotation carries a discussion thread: the editor shows the whole
+  thread with author/AI labels, the agent can post replies through its tool, and the generated
+  markdown export includes a `Replies:` list.
 - **Annotations are plain project files.** Each chapter's annotations are written to
   `<book folder>/.dsh_reader/<chapter>.md` (human- and agent-readable) with a machine-readable
   `.dsh_reader.json` beside them. No database, no lock-in, git-friendly.

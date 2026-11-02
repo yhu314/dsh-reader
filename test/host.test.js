@@ -1049,3 +1049,105 @@ test("GET /search also works for an ad-hoc book", async () => {
   assert.equal(res.json.matches.length, 1);
   assert.equal(res.json.matches[0].chapterId, "a.md");
 });
+
+// ── annotation replies ────────────────────────────────────────────────────
+
+test("POST /annotations op=reply threads a discussion and exports it", async () => {
+  const fresh = createClient(baseConfig());
+  const saved = await request(fresh, "/api/dsh_reader/annotations", {
+    method: "POST",
+    body: { lib: "test-book", file: "第001章.md", op: "save", comment: { quote: "血泼了他一脸", block: 2, note: "这里太轻。" } },
+  });
+  const created = saved.json.comments.find((item) => item.note === "这里太轻。");
+  assert.ok(created, "the annotation must be created");
+
+  let res = await request(fresh, "/api/dsh_reader/annotations", {
+    method: "POST",
+    body: { lib: "test-book", file: "第001章.md", op: "reply", id: created.id, text: "改成吐血试试。" },
+  });
+  assert.equal(res.status, 200);
+  const comment = res.json.comments.find((item) => item.id === created.id);
+  assert.equal(comment.replies.length, 1);
+  assert.match(comment.replies[0].id, /^R\d+$/);
+  assert.equal(comment.replies[0].author, "author");
+  assert.equal(comment.replies[0].text, "改成吐血试试。");
+
+  res = await request(fresh, "/api/dsh_reader/annotations", {
+    method: "POST",
+    body: { lib: "test-book", file: "第001章.md", op: "reply", id: created.id, text: "已改。", author: "ai" },
+  });
+  assert.equal(res.json.comments.find((item) => item.id === created.id).replies.length, 2);
+
+  const md = await readFile(join(annotationDir, "第001章.md"), "utf8");
+  assert.match(md, /回复：/);
+  assert.match(md, /- \*\*作者\*\*：改成吐血试试。/);
+  assert.match(md, /- \*\*AI\*\*：已改。/);
+
+  const bad = await request(fresh, "/api/dsh_reader/annotations", {
+    method: "POST",
+    body: { lib: "test-book", file: "第001章.md", op: "reply", id: created.id, text: "  " },
+  });
+  assert.equal(bad.status, 400);
+});
+
+test("reader_annotations tool replies to an annotation and lists the thread", async () => {
+  const root = await mkdtemp(join(tmpdir(), "dsh_reader-reply-"));
+  try {
+    const annotationDir = join(root, "annotations");
+    await mkdir(annotationDir, { recursive: true });
+    const chapterPath = join(root, "第001章.md");
+    await writeFile(chapterPath, "# 第001章\n\n正文。\n", "utf8");
+    await writeFile(
+      join(annotationDir, ".dsh_reader.json"),
+      JSON.stringify({
+        version: 1,
+        chapters: {
+          "第001章.md": {
+            source: chapterPath,
+            updatedAt: 1,
+            comments: [
+              { id: "A1", quote: "正文", block: 1, note: "看看这里", resolved: false, replies: [], createdAt: 1, updatedAt: 1 },
+            ],
+          },
+        },
+      }),
+      "utf8",
+    );
+    const tool = createAnnotationsTool(normalizeConfig({ libraries: [{ id: "reply-book", root, annotationDir }], pathBase: root }));
+
+    let result = await tool.execute({ action: "reply", chapter: "第001章.md", id: "A1", text: "已经改好了。" });
+    assert.equal(result.action, "reply");
+    assert.equal(result.annotations[0].replies.length, 1);
+    assert.equal(result.annotations[0].replies[0].author, "ai");
+    assert.equal(result.annotations[0].replies[0].text, "已经改好了。");
+
+    result = await tool.execute({ action: "list", chapter: "第001章.md" });
+    assert.equal(result.annotations[0].replies.length, 1);
+    await assert.rejects(() => tool.execute({ action: "reply", chapter: "第001章.md", id: "A9", text: "x" }), /unknown annotation/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// ── ad-hoc replies (annotations for any folder) ──────────────────────────
+
+test("annotations in an ad-hoc folder accept replies too", async () => {
+  const target = join(adhocRoot, "a.md");
+  const created = await request(client, "/api/dsh_reader/annotations", {
+    method: "POST",
+    body: { path: target, op: "save", comment: { quote: "A 正文", block: 1, note: "这里加一句。" } },
+  });
+  assert.equal(created.status, 200);
+  const commentId = created.json.comments[0].id;
+
+  const replied = await request(client, "/api/dsh_reader/annotations", {
+    method: "POST",
+    body: { path: target, op: "reply", id: commentId, text: "已经加上了。", author: "ai" },
+  });
+  assert.equal(replied.status, 200);
+  assert.equal(replied.json.comments[0].replies.length, 1);
+  assert.equal(replied.json.comments[0].replies[0].author, "ai");
+
+  const store = JSON.parse(await readFile(join(adhocRoot, ".dsh_reader", ".dsh_reader.json"), "utf8"));
+  assert.equal(store.chapters["a.md"].comments[0].replies[0].text, "已经加上了。");
+});

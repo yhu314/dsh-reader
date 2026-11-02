@@ -909,6 +909,23 @@ function emptyStore() {
 }
 
 /** Canonicalize one stored comment; unknown fields are dropped. */
+function normalizeReplies(raw) {
+  if (!Array.isArray(raw)) return [];
+  const replies = [];
+  for (const entry of raw) {
+    if (!isPlainObject(entry)) continue;
+    const text = typeof entry.text === "string" ? entry.text : "";
+    if (text.trim() === "") continue;
+    replies.push({
+      id: typeof entry.id === "string" && entry.id !== "" ? entry.id : `R${replies.length + 1}`,
+      author: entry.author === "ai" ? "ai" : "author",
+      text,
+      createdAt: Number.isFinite(entry.createdAt) ? entry.createdAt : 0,
+    });
+  }
+  return replies;
+}
+
 function normalizeComment(raw) {
   return {
     id: String(raw.id),
@@ -916,9 +933,20 @@ function normalizeComment(raw) {
     block: Number.isFinite(raw.block) ? Math.trunc(raw.block) : null,
     note: typeof raw.note === "string" ? raw.note : "",
     resolved: raw.resolved === true,
+    replies: normalizeReplies(raw.replies),
     createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : 0,
     updatedAt: Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0,
   };
+}
+
+/** Next free `R<n>` id inside one annotation thread. */
+function nextReplyId(replies) {
+  let highest = 0;
+  for (const reply of replies) {
+    const match = /^R(\d+)$/.exec(String(reply.id || ""));
+    if (match !== null) highest = Math.max(highest, Number(match[1]));
+  }
+  return `R${highest + 1}`;
 }
 
 /** Canonicalize a stored chapter entry. */
@@ -1086,6 +1114,15 @@ function renderAnnotationMarkdown({ title, chapterId, comments, locale }) {
     if (note !== "") {
       lines.push("");
       lines.push(note);
+    }
+    const replies = Array.isArray(comment.replies) ? comment.replies : [];
+    if (replies.length > 0) {
+      lines.push("");
+      lines.push(chinese ? "回复：" : "Replies:");
+      for (const reply of replies) {
+        const who = reply.author === "ai" ? "AI" : chinese ? "作者" : "Author";
+        lines.push(`- **${who}**：${collapseWhitespace(reply.text)}`);
+      }
     }
   }
 
@@ -1350,7 +1387,7 @@ async function handleAnnotationsWrite(settings, req) {
   const { library, chapter } = await annotationTargetFromBody(settings, body);
 
   const op = body.op;
-  if (op !== "save" && op !== "delete" && op !== "resolve") {
+  if (op !== "save" && op !== "delete" && op !== "resolve" && op !== "reply") {
     throw new HttpError(400, "unknown op");
   }
 
@@ -1395,6 +1432,24 @@ async function handleAnnotationsWrite(settings, req) {
         updatedAt: now,
       });
     }
+  } else if (op === "reply") {
+    if (typeof body.id !== "string" || body.id === "") {
+      throw new HttpError(400, "missing comment id");
+    }
+    if (typeof body.text !== "string" || body.text.trim() === "") {
+      throw new HttpError(400, "reply text is required");
+    }
+    const target = comments.find((comment) => comment.id === body.id);
+    if (target === undefined) throw new HttpError(404, "unknown comment");
+    const replies = Array.isArray(target.replies) ? target.replies : [];
+    replies.push({
+      id: nextReplyId(replies),
+      author: body.author === "ai" ? "ai" : "author",
+      text: body.text.trim(),
+      createdAt: now,
+    });
+    target.replies = replies;
+    target.updatedAt = now;
   } else if (op === "delete") {
     if (typeof body.id !== "string" || body.id === "") {
       throw new HttpError(400, "missing comment id");
@@ -1578,7 +1633,7 @@ const TOOL_NAME = "reader_annotations";
 const TOOL_DESCRIPTION = [
   "Read and resolve the annotations written in the dsh_reader Book viewer.",
   '`list` returns the annotations of one chapter, or every annotated chapter in a library;',
-  '`resolve` marks annotations as resolved after you have applied them to the chapter.',
+  '`resolve` marks annotations as resolved after you have applied them to the chapter, and `reply` posts an answer into an annotation thread.',
   "Annotations are plain markdown notes under the library's annotationDir; the returned chapterPath and annotationPath are the same paths the viewer shows, so you can read or edit the files directly.",
 ].join(" ");
 
@@ -1604,6 +1659,11 @@ function annotationView(comment) {
     quote: comment.quote,
     paragraph: Number.isInteger(comment.block) ? comment.block : 0,
     resolved: comment.resolved === true,
+    replies: (Array.isArray(comment.replies) ? comment.replies : []).map((reply) => ({
+      author: reply.author === "ai" ? "ai" : "author",
+      text: reply.text,
+      createdAt: reply.createdAt,
+    })),
   };
 }
 
@@ -1733,6 +1793,49 @@ async function resolveAnnotations(settings, args) {
   };
 }
 
+/** `reply` implementation: append one message to an annotation thread. */
+async function replyAnnotations(settings, args) {
+  const library = toolLibrary(settings, args.library);
+  if (typeof args.chapter !== "string" || args.chapter.trim() === "") {
+    throw new Error("chapter is required for action=reply");
+  }
+  if (typeof args.id !== "string" || args.id === "") {
+    throw new Error("id is required for action=reply");
+  }
+  const text = typeof args.text === "string" ? args.text.trim() : "";
+  if (text === "") throw new Error("text is required for action=reply");
+
+  const chapter = await resolveChapter(library, args.chapter.trim());
+  const meta = (await listChapters(library)).find((candidate) => candidate.id === chapter.id);
+  const store = await loadAnnotationStore(library.annotationDir);
+  const entry = store.chapters[chapter.id];
+  const target = entry === undefined ? undefined : entry.comments.find((comment) => comment.id === args.id);
+  if (target === undefined) throw new Error(`unknown annotation id: ${args.id}`);
+  const replies = Array.isArray(target.replies) ? target.replies : [];
+  const now = Date.now();
+  replies.push({
+    id: nextReplyId(replies),
+    author: args.author === "author" ? "author" : "ai",
+    text,
+    createdAt: now,
+  });
+  target.replies = replies;
+  target.updatedAt = now;
+  entry.updatedAt = now;
+  store.chapters[chapter.id] = entry;
+  await saveAnnotationStore(library.annotationDir, store);
+  await writeAnnotationExport(library, chapter, entry);
+
+  return {
+    action: "reply",
+    library: libraryView(library),
+    chapter: chapterView(library, chapter, meta || {}),
+    counts: countsOf(entry.comments),
+    annotations: entry.comments.map(annotationView),
+    changed: 1,
+  };
+}
+
 /**
  * Build the registry-ready `reader_annotations` tool for one configured profile.
  *
@@ -1750,8 +1853,21 @@ export function createAnnotationsTool(settings) {
       properties: {
         action: {
           type: "string",
-          enum: ["list", "resolve"],
-          description: "list: read annotations; resolve: mark annotations resolved (or reopen them).",
+          enum: ["list", "resolve", "reply"],
+          description: "list: read annotations; resolve: mark annotations resolved (or reopen them); reply: post a message into an annotation thread.",
+        },
+        id: {
+          type: "string",
+          description: "reply: annotation id to answer, e.g. \"A1\".",
+        },
+        text: {
+          type: "string",
+          description: "reply: the message to post.",
+        },
+        author: {
+          type: "string",
+          enum: ["ai", "author"],
+          description: "reply: who is posting; defaults to ai.",
         },
         library: {
           type: "string",
@@ -1841,13 +1957,26 @@ export function createAnnotationsTool(settings) {
             items: {
               type: "object",
               additionalProperties: false,
-              required: ["id", "note", "quote", "paragraph", "resolved"],
+              required: ["id", "note", "quote", "paragraph", "resolved", "replies"],
               properties: {
                 id: { type: "string" },
                 note: { type: "string" },
                 quote: { type: "string" },
                 paragraph: { type: "integer", description: "1-based paragraph number; 0 = whole file" },
                 resolved: { type: "boolean" },
+                replies: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["author", "text", "createdAt"],
+                    properties: {
+                      author: { type: "string", enum: ["author", "ai"] },
+                      text: { type: "string" },
+                      createdAt: { type: "integer" },
+                    },
+                  },
+                },
               },
             },
           },
@@ -1859,7 +1988,10 @@ export function createAnnotationsTool(settings) {
         else lines.push(`${value.library.title}: ${value.counts.open} open / ${value.counts.total} annotations`);
         for (const annotation of value.annotations || []) {
           const paragraph = Number.isInteger(annotation.paragraph) ? ` ¶${annotation.paragraph}` : "";
-          lines.push(`- ${annotation.id}${paragraph}${annotation.resolved ? " (resolved)" : ""}: ${annotation.note}`);
+          lines.push(`- ${annotation.id}${paragraph}${annotation.resolved ? " (resolved)" : ""}: ${annotation.note}`)
+          for (const reply of annotation.replies || []) {
+            lines.push(`    ${reply.author === "ai" ? "AI" : "author"}: ${reply.text}`)
+          };
         }
         for (const chapter of value.chapters || []) {
           lines.push(`- ${chapter.id}: ${chapter.open} open / ${chapter.total}`);
@@ -1872,6 +2004,7 @@ export function createAnnotationsTool(settings) {
       const action = args && args.action;
       if (action === "list") return listAnnotations(settings, args);
       if (action === "resolve") return resolveAnnotations(settings, args);
+      if (action === "reply") return replyAnnotations(settings, args);
       throw new Error(`unknown action: ${String(action)}`);
     },
     presentCall: (args) => ({

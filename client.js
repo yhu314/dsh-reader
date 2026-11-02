@@ -1284,6 +1284,11 @@ window.__ModuleLoader__.load({
       searchJump: '跳到这一段',
       linkUnresolved: '这个相对链接无法解析（当前章节没有已知的绝对路径）',
       linkUnavailable: '这个链接打不开（当前标签页没有会话信息）',
+      replies: '讨论',
+      reply: '回复',
+      replyPlaceholder: '回复这条批注…',
+      noReplies: '还没有回复',
+      authorLabel: '我',
       notThisSession: '阅读器未在这个会话启用',
       notThisSessionBody:
         '插件里配置了 sessions 白名单，当前会话不在名单内。刷新页面即可恢复内置预览；要在这里启用，把会话 id 加进 sessions。',
@@ -1343,6 +1348,11 @@ window.__ModuleLoader__.load({
       searchJump: 'Jump to this paragraph',
       linkUnresolved: 'This relative link cannot be resolved for the current chapter.',
       linkUnavailable: 'This link cannot be opened from this tab.',
+      replies: 'Discussion',
+      reply: 'Reply',
+      replyPlaceholder: 'Reply to this annotation…',
+      noReplies: 'No replies yet',
+      authorLabel: 'Me',
       notThisSession: 'Reader is not enabled in this session',
       notThisSessionBody:
         'The plugin has a `sessions` allowlist and this session is not on it. Reload the page to get the built-in preview back; add this session id to `sessions` to use the reader here.',
@@ -1376,6 +1386,13 @@ window.__ModuleLoader__.load({
 @keyframes dsrBlockFlash{0%{background:rgba(77,107,254,.28);box-shadow:0 0 0 3px rgba(77,107,254,.35);border-radius:4px}100%{background:transparent}}
 .dsr-searchRow{display:flex;gap:5px;padding:2px 2px 8px}
 .dsr-searchInput{flex:1;min-width:0}
+.dsr-thread{display:flex;flex-direction:column;gap:5px;margin-bottom:7px;max-height:180px;overflow-y:auto}
+.dsr-reply{display:flex;gap:6px;align-items:baseline;padding:5px 7px;border-radius:7px;background:var(--dsw-alias-bg-layer-2,rgba(255,255,255,.04))}
+.dsr-replyAuthor{flex:none;font-size:10px;color:var(--dsw-alias-brand-primary,#7d97ff);font-weight:600;min-width:22px}
+.dsr-replyText{flex:1;min-width:0;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-primary,#e8e9ee);white-space:pre-wrap;overflow-wrap:break-word}
+.dsr-replyRow{display:flex;gap:5px;align-items:flex-end}
+.dsr-replyBox{min-height:46px;flex:1}
+.dsr-emptyTight{padding:4px 2px 8px;text-align:left;font-size:11px}
 .dsr-resultRow{padding:7px 8px;border-radius:8px;cursor:pointer;margin-bottom:4px;background:var(--dsw-alias-bg-layer-2,rgba(255,255,255,.04))}
 .dsr-resultRow:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08))}
 .dsr-resultTop{display:flex;align-items:center;gap:6px}
@@ -2737,6 +2754,38 @@ window.__ModuleLoader__.load({
         [applyComments, book.libraryId, book.mode, showToast],
       )
 
+      const addReply = useCallback(
+        async (chapterId, commentId, text) => {
+          if (!book.annotationEnabled) return false
+          const chapter = Object.values(loadedRef.current).find((item) => item.id === chapterId)
+          if (!chapter) return false
+          const writeBody =
+            book.mode === 'library'
+              ? { lib: book.libraryId, file: chapterId, op: 'reply', id: commentId, text, author: 'author' }
+              : { path: chapter.chapterPath, op: 'reply', id: commentId, text, author: 'author' }
+          try {
+            const result = await callApi('/annotations', {
+              method: 'POST',
+              body: JSON.stringify(writeBody),
+            })
+            applyComments(chapterId, result.comments || [])
+            const updated = (result.comments || []).find((comment) => comment.id === commentId)
+            if (updated) {
+              setForm((previous) =>
+                previous && previous.comment && previous.comment.id === commentId
+                  ? { ...previous, comment: updated }
+                  : previous,
+              )
+            }
+            return true
+          } catch (caught) {
+            showToast(String(caught && caught.message ? caught.message : caught), true)
+            return false
+          }
+        },
+        [applyComments, book.annotationEnabled, book.libraryId, book.mode, showToast],
+      )
+
       const copyPrompt = useCallback(async () => {
         if (!activeChapter) return
         if (!activeChapter.comments || activeChapter.comments.length === 0) {
@@ -2908,6 +2957,8 @@ window.__ModuleLoader__.load({
               key: form.mode + ':' + (form.comment ? form.comment.id : 'new:' + String(form.block) + ':' + form.quote),
               t,
               form,
+              replies: form.comment && Array.isArray(form.comment.replies) ? form.comment.replies : [],
+              onReply: form.mode === 'edit' && form.comment ? (text) => addReply(form.chapterId, form.comment.id, text) : null,
               onCancel: () => setForm(null),
               onSave: saveComment,
               onDelete: form.mode === 'edit' ? () => mutateComment(form.chapterId, 'delete', form.comment.id) : null,
@@ -3066,6 +3117,7 @@ window.__ModuleLoader__.load({
 
     // ── annotation drawer row ─────────────────────────────────────────────
     function AnnotationRow({ t, comment, onOpen, onEdit, onResolve, onDelete }) {
+      const replyCount = Array.isArray(comment.replies) ? comment.replies.length : 0
       const ref = useRef(null)
       const rectOf = () => {
         const rect = ref.current ? ref.current.getBoundingClientRect() : { left: 0, top: 0, bottom: 0 }
@@ -3075,19 +3127,33 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dsr-annTop' },
           h('span', { className: 'dsr-annId' }, comment.id),
           comment.resolved ? h('span', { className: 'dsr-badge dsr-badgeMuted' }, tr(t, 'resolved')) : null,
+          replyCount > 0 ? h('span', { className: 'dsr-badge' }, tr(t, 'reply') + ' ' + replyCount) : null,
           h('span', { style: { flex: 1 } }),
           h('span', { className: 'dsr-annId' }, formatBlockLabel(t, comment.block))),
         comment.quote ? h('p', { className: 'dsr-annQuote' }, '「' + comment.quote + '」') : null,
         comment.note ? h('p', { className: 'dsr-annNote' }, comment.note) : null,
         h('div', { className: 'dsr-annActions' },
+          h('button', { type: 'button', className: 'dsr-btn', onClick: (event) => { event.stopPropagation(); onEdit(rectOf()) } }, tr(t, 'reply')),
           h('button', { type: 'button', className: 'dsr-btn', onClick: (event) => { event.stopPropagation(); onEdit(rectOf()) } }, tr(t, 'edit')),
           h('button', { type: 'button', className: 'dsr-btn', onClick: (event) => { event.stopPropagation(); onResolve() } }, comment.resolved ? tr(t, 'reopen') : tr(t, 'resolve')),
           h('button', { type: 'button', className: 'dsr-btn dsr-btnDanger', onClick: (event) => { event.stopPropagation(); onDelete() } }, tr(t, 'delete'))))
     }
 
     // ── comment form popover ──────────────────────────────────────────────
-    function AnnotationForm({ t, form, onCancel, onSave, onDelete }) {
+    function AnnotationForm({ t, form, replies, onReply, onCancel, onSave, onDelete }) {
       const [note, setNote] = useState(form.comment ? form.comment.note || '' : '')
+      const [replyText, setReplyText] = useState('')
+      const [replySending, setReplySending] = useState(false)
+      const submitReply = async () => {
+        if (!onReply || replyText.trim() === '' || replySending) return
+        setReplySending(true)
+        try {
+          const ok = await onReply(replyText.trim())
+          if (ok) setReplyText('')
+        } finally {
+          setReplySending(false)
+        }
+      }
       const areaRef = useRef(null)
       useEffect(() => {
         if (areaRef.current) areaRef.current.focus()
@@ -3113,6 +3179,30 @@ window.__ModuleLoader__.load({
             placeholder: tr(t, 'notePlaceholder'),
             onChange: (event) => setNote(event.target.value),
           })),
+        onReply
+          ? h('div', { className: 'dsr-field' },
+              h('label', { className: 'dsr-label' }, tr(t, 'replies')),
+              replies && replies.length > 0
+                ? h('div', { className: 'dsr-thread' },
+                    replies.map((reply) =>
+                      h('div', { key: reply.id, className: 'dsr-reply' },
+                        h('span', { className: 'dsr-replyAuthor' }, reply.author === 'ai' ? 'AI' : tr(t, 'authorLabel')),
+                        h('span', { className: 'dsr-replyText' }, reply.text))))
+                : h('div', { className: 'dsr-empty dsr-emptyTight' }, tr(t, 'noReplies')),
+              h('div', { className: 'dsr-replyRow' },
+                h('textarea', {
+                  className: 'dsr-textarea dsr-replyBox',
+                  value: replyText,
+                  placeholder: tr(t, 'replyPlaceholder'),
+                  onChange: (event) => setReplyText(event.target.value),
+                }),
+                h('button', {
+                  type: 'button',
+                  className: 'dsr-btn dsr-btnPrimary',
+                  disabled: replyText.trim() === '' || replySending,
+                  onClick: submitReply,
+                }, tr(t, 'reply'))))
+          : null,
         h('div', { className: 'dsr-popFoot' },
           onDelete ? h('button', { type: 'button', className: 'dsr-btn dsr-btnDanger', onClick: onDelete }, tr(t, 'delete')) : null,
           h('div', { style: { flex: 1 } }),

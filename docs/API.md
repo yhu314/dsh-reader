@@ -175,8 +175,12 @@ Two forms:
       "block": 12,
       "note": "This sentence is too light.",
       "resolved": false,
+      "replies": [
+        { "id": "R1", "author": "author", "text": "Let me try a shorter version.", "createdAt": 1793000001000 },
+        { "id": "R2", "author": "ai", "text": "Done in v2.", "createdAt": 1793000002000 }
+      ],
       "createdAt": 1793000000000,
-      "updatedAt": 1793000000000
+      "updatedAt": 1793000002000
     }
   ],
   "annotationFile": "第001章.md",
@@ -199,6 +203,7 @@ Body: `{ "lib": "zhaoyun", "file": "第001章.md", "op": "save", "comment": { ..
 | `save` | `comment` = `{ quote, block, note, resolved }` (omit `id` to create) | create or replace one comment |
 | `delete` | `id` | remove one comment |
 | `resolve` | `id`, `resolved` (boolean) | set the resolved flag |
+| `reply` | `id`, `text`, `author?` (`author` \| `ai`, default `author`) | append one message to the annotation's thread |
 
 The response is the same shape as `GET /annotations` after the write. The `path` form (ad-hoc)
 stores annotations in a `.dsh_reader` sidecar next to the book; the `lib` form uses the library's
@@ -211,17 +216,19 @@ viewer writes, without a copy-paste round trip.
 
 | Parameter | Type | Meaning |
 | --- | --- | --- |
-| `action` | `list` \| `resolve` (required) | read annotations, or mark them resolved/reopened |
+| `action` | `list` \| `resolve` \| `reply` (required) | read annotations, mark them resolved/reopened, or post a reply |
 | `library` | string | library id; optional when exactly one library is configured |
 | `chapter` | string | chapter id relative to the library root (`第026章.md`); required for `resolve` |
 | `onlyOpen` | boolean | `list`: return only unresolved annotations |
 | `ids` | string[] | `resolve`: annotation ids (e.g. `["A1"]`) |
 | `all` | boolean | `resolve`: every annotation in the chapter |
 | `reopen` | boolean | `resolve`: set `resolved=false` instead of true |
+| `id` / `text` / `author` | string | `reply`: annotation id, message, and who posts it (`ai` by default) |
 
 `list` with a `chapter` returns `{ action, library, chapter, counts, annotations }`; without one it
 returns one row per annotated chapter (`chapters`) plus aggregate counts. Every annotation row is
-`{ id, note, quote, paragraph, resolved }` (paragraph is the 1-based block number). `resolve`
+`{ id, note, quote, paragraph, resolved, replies }` (paragraph is the 1-based block number;
+`replies` are `{ author, text, createdAt }`). `reply` posts an AI answer into that thread. `resolve`
 regenerates the markdown export and returns the updated list plus `changed`.
 
 The tool and the HTTP routes share one store: anything the agent resolves shows up in the viewer's
@@ -256,6 +263,10 @@ subdirectory, so a folder opened directly annotates into `<folder>/.dsh_reader/`
 > 原文：「血泼了他一脸」
 
 这一句太轻。
+
+回复：
+- **作者**：改成吐血试试。
+- **AI**：已改。
 ```
 
 Writes are atomic (`*.tmp` + rename). A corrupt store is reported as 500 instead of being silently
